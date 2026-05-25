@@ -15,6 +15,7 @@
 use crate::analysis::{oldest_n_files, top_n_files};
 use crate::mft::{is_ntfs_drive_root, MftScanner};
 use crate::scanner::{wide, wstr_to_string, ProgressFn, Scanner};
+use crate::temp::{self, TempFileEntry};
 use crate::types::{FolderNode, ScanProgress};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -101,10 +102,7 @@ const ID_MENU_ABOUT: u16 = 5200;
 const ID_MENU_VIEW_TREE: u16 = 5301;
 const ID_MENU_VIEW_TOPFILES: u16 = 5302;
 const ID_MENU_VIEW_OLDEST: u16 = 5303;
-
-// All three views happen to have 4 listview columns; kept as a single constant
-// to drive the column-rebuild on view switch.
-const VIEW_COLUMN_COUNT: i32 = 4;
+const ID_MENU_VIEW_TEMP: u16 = 5304;
 
 // Number of files shown in the file-based views (top largest / oldest).
 const TOP_N_FILES: usize = 100;
@@ -112,6 +110,7 @@ const TOP_N_FILES: usize = 100;
 // Custom messages
 const WM_APP_PROGRESS: u32 = WM_APP + 1;
 const WM_APP_DONE: u32 = WM_APP + 2;
+const WM_APP_TEMP_DONE: u32 = WM_APP + 3;
 
 // Virtual key codes (avoid pulling another module just for these)
 const VK_F5: u16 = 0x74;
@@ -154,6 +153,7 @@ enum ViewMode {
     FolderTree,
     TopFiles,
     OldestFiles,
+    TempFiles,
 }
 
 struct AppState {
@@ -185,6 +185,11 @@ struct AppState {
     is_dark: bool,
     menu: HMENU,
     view_mode: ViewMode,
+
+    // Independent of the drive-scan tree: flat list of files discovered under
+    // the known "safe-to-delete" temp locations. Populated by start_temp_scan.
+    temp_entries: Vec<TempFileEntry>,
+    temp_shared: Arc<Mutex<Option<Vec<TempFileEntry>>>>,
 }
 
 #[derive(Copy, Clone)]
@@ -249,6 +254,8 @@ pub fn run() {
             is_dark: false,
             menu: HMENU::default(),
             view_mode: ViewMode::FolderTree,
+            temp_entries: Vec::new(),
+            temp_shared: Arc::new(Mutex::new(None)),
         });
         let app_ptr = Box::into_raw(app);
 
@@ -344,6 +351,10 @@ unsafe extern "system" fn wnd_proc(
             on_scan_done(app);
             LRESULT(0)
         }
+        m if m == WM_APP_TEMP_DONE => {
+            on_temp_scan_done(app);
+            LRESULT(0)
+        }
         WM_DESTROY => {
             app.cancel.store(true, Ordering::SeqCst);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -374,13 +385,19 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
         ID_MENU_THEME_AUTO => apply_theme(hwnd, app, ThemeMode::Auto),
         ID_MENU_THEME_LIGHT => apply_theme(hwnd, app, ThemeMode::Light),
         ID_MENU_THEME_DARK => apply_theme(hwnd, app, ThemeMode::Dark),
-        ID_MENU_VIEW_TREE => apply_view_mode(app, ViewMode::FolderTree),
-        ID_MENU_VIEW_TOPFILES => apply_view_mode(app, ViewMode::TopFiles),
-        ID_MENU_VIEW_OLDEST => apply_view_mode(app, ViewMode::OldestFiles),
+        ID_MENU_VIEW_TREE => apply_view_mode(hwnd, app, ViewMode::FolderTree),
+        ID_MENU_VIEW_TOPFILES => apply_view_mode(hwnd, app, ViewMode::TopFiles),
+        ID_MENU_VIEW_OLDEST => apply_view_mode(hwnd, app, ViewMode::OldestFiles),
+        ID_MENU_VIEW_TEMP => apply_view_mode(hwnd, app, ViewMode::TempFiles),
         ID_MENU_REFRESH | ID_ACC_REFRESH => {
             if !app.scanning {
-                if let Some((path, use_mft)) = app.last_scan.clone() {
-                    start_scan(hwnd, app, path, use_mft);
+                match app.view_mode {
+                    ViewMode::TempFiles => start_temp_scan(hwnd, app),
+                    _ => {
+                        if let Some((path, use_mft)) = app.last_scan.clone() {
+                            start_scan(hwnd, app, path, use_mft);
+                        }
+                    }
                 }
             }
         }
@@ -434,15 +451,7 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
             }
         }
         ID_ACC_DELETE | ID_CTX_RECYCLE => {
-            if let Some(node) = selected_list_node(app) {
-                recycle(&node.full_path);
-                // Refresh after recycle
-                if let Some((path, use_mft)) = app.last_scan.clone() {
-                    if !app.scanning {
-                        start_scan(hwnd, app, path, use_mft);
-                    }
-                }
-            }
+            handle_recycle(hwnd, app);
         }
         ID_CTX_COPY => {
             if let Some(node) = selected_list_node(app) {
@@ -672,6 +681,12 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
         ID_MENU_VIEW_OLDEST as usize,
         w!("&Oldest files (by date modified)"),
     );
+    let _ = AppendMenuW(
+        view_pop,
+        MF_STRING,
+        ID_MENU_VIEW_TEMP as usize,
+        w!("&Safe-to-delete temp files"),
+    );
     let _ = AppendMenuW(view_pop, MF_SEPARATOR, 0, PCWSTR::null());
     let theme_pop = CreatePopupMenu().expect("CreatePopupMenu theme");
     let _ = AppendMenuW(theme_pop, MF_STRING, ID_MENU_THEME_AUTO as usize, w!("&Auto (system)"));
@@ -699,7 +714,7 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let _ = CheckMenuRadioItem(
         menu,
         ID_MENU_VIEW_TREE as u32,
-        ID_MENU_VIEW_OLDEST as u32,
+        ID_MENU_VIEW_TEMP as u32,
         ID_MENU_VIEW_TREE as u32,
         MF_BYCOMMAND.0,
     );
@@ -849,8 +864,9 @@ unsafe fn on_scan_done(app: &mut AppState) {
     }
     // The tree-selection above repopulates the listview for the FolderTree view.
     // File-based views ignore tree selection; populate the global ranking directly.
+    // TempFiles is independent of drive scans entirely.
     match app.view_mode {
-        ViewMode::FolderTree => {}
+        ViewMode::FolderTree | ViewMode::TempFiles => {}
         ViewMode::TopFiles => populate_list_top_files(app),
         ViewMode::OldestFiles => populate_list_oldest_files(app),
     }
@@ -939,9 +955,10 @@ unsafe fn on_tree_select(app: &mut AppState) {
 unsafe fn populate_list(app: &AppState, node: &FolderNode) {
     match app.view_mode {
         ViewMode::FolderTree => populate_list_folders(app, node),
-        ViewMode::TopFiles | ViewMode::OldestFiles => {
-            // File-based views ignore tree selection — they show a global ranking
-            // over the entire scan. Repopulating on selection-change is wasteful.
+        ViewMode::TopFiles | ViewMode::OldestFiles | ViewMode::TempFiles => {
+            // File-based and temp views show global rankings independent of the
+            // tree selection; repopulating on tree-select would be wasteful and
+            // would clobber the temp view entirely.
         }
     }
 }
@@ -971,6 +988,145 @@ unsafe fn populate_list_top_files(app: &AppState) {
 
 unsafe fn populate_list_oldest_files(app: &AppState) {
     populate_list_from_hits(app, |root| oldest_n_files(root, TOP_N_FILES));
+}
+
+unsafe fn populate_list_temp(app: &AppState) {
+    SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+    for (i, e) in app.temp_entries.iter().enumerate() {
+        let p = std::path::Path::new(&e.full_path);
+        let leaf = p
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| e.full_path.clone());
+        let folder = p
+            .parent()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // lParam carries the index into app.temp_entries so multi-select
+        // recycle can recover the full path without re-parsing the listview.
+        insert_row_with_param(
+            app.list,
+            i as i32,
+            &leaf,
+            &[
+                format_bytes(e.size),
+                format_filetime(e.last_modified_ft),
+                e.source.label().to_string(),
+                folder,
+            ],
+            i as isize,
+        );
+    }
+}
+
+unsafe fn start_temp_scan(hwnd: HWND, app: &mut AppState) {
+    if app.scanning {
+        return;
+    }
+    let locations = temp::discover_locations();
+    if locations.is_empty() {
+        set_status(app.status, "No known temp locations found on this system.");
+        return;
+    }
+
+    {
+        let mut s = app.temp_shared.lock().unwrap();
+        *s = None;
+    }
+    SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+    app.temp_entries.clear();
+
+    let summary = locations
+        .iter()
+        .map(|(s, _)| s.label())
+        .collect::<Vec<_>>()
+        .join(", ");
+    set_status(app.status, &format!("Scanning temp locations: {summary}..."));
+    app.cancel.store(false, Ordering::SeqCst);
+    app.scanning = true;
+    let _ = EnableWindow(app.stop_btn, true);
+    for b in &app.drive_buttons {
+        let _ = EnableWindow(*b, false);
+    }
+
+    let send_hwnd = SendHwnd(hwnd.0 as isize);
+    let shared = app.temp_shared.clone();
+    let cancel = app.cancel.clone();
+    std::thread::spawn(move || {
+        let entries = temp::scan_locations(&locations, cancel);
+        if let Ok(mut s) = shared.lock() {
+            *s = Some(entries);
+        }
+        unsafe {
+            let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_TEMP_DONE, WPARAM(0), LPARAM(0));
+        }
+    });
+}
+
+unsafe fn on_temp_scan_done(app: &mut AppState) {
+    let entries = {
+        let mut s = app.temp_shared.lock().unwrap();
+        s.take()
+    };
+    app.scanning = false;
+    let _ = EnableWindow(app.stop_btn, false);
+    for b in &app.drive_buttons {
+        let _ = EnableWindow(*b, true);
+    }
+
+    let Some(entries) = entries else {
+        set_status(app.status, "Temp scan cancelled.");
+        return;
+    };
+
+    let total: i64 = entries.iter().map(|e| e.size).sum();
+    let count = entries.len();
+    app.temp_entries = entries;
+
+    if app.view_mode == ViewMode::TempFiles {
+        populate_list_temp(app);
+    }
+    set_status(
+        app.status,
+        &format!(
+            "{} temp files — {} reclaimable. Ctrl/Shift-click to multi-select, then Del to recycle.",
+            format_count(count as i64),
+            format_bytes(total),
+        ),
+    );
+}
+
+unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState) {
+    if app.view_mode == ViewMode::TempFiles {
+        let indices = selected_indices(app.list);
+        if indices.is_empty() {
+            return;
+        }
+        // Borrow paths out so we can drop the borrow before mutating app.
+        let paths: Vec<String> = indices
+            .iter()
+            .filter_map(|&i| app.temp_entries.get(i as usize))
+            .map(|e| e.full_path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        recycle_many(&path_refs);
+        if !app.scanning {
+            start_temp_scan(hwnd, app);
+        }
+        return;
+    }
+
+    if let Some(node) = selected_list_node(app) {
+        recycle(&node.full_path);
+        if let Some((path, use_mft)) = app.last_scan.clone() {
+            if !app.scanning {
+                start_scan(hwnd, app, path, use_mft);
+            }
+        }
+    }
 }
 
 unsafe fn populate_list_from_hits<F>(app: &AppState, query: F)
@@ -1004,15 +1160,15 @@ where
     }
 }
 
-unsafe fn apply_view_mode(app: &mut AppState, mode: ViewMode) {
+unsafe fn apply_view_mode(hwnd: HWND, app: &mut AppState, mode: ViewMode) {
     if app.view_mode == mode {
         return;
     }
     app.view_mode = mode;
 
-    for _ in 0..VIEW_COLUMN_COUNT {
-        SendMessageW(app.list, LVM_DELETECOLUMN, WPARAM(0), LPARAM(0));
-    }
+    // Drain all existing columns. Views differ in column count (folder = 4,
+    // file views = 4, temp = 5), so loop until LVM_DELETECOLUMN returns 0.
+    while SendMessageW(app.list, LVM_DELETECOLUMN, WPARAM(0), LPARAM(0)).0 != 0 {}
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
 
     match mode {
@@ -1044,6 +1200,18 @@ unsafe fn apply_view_mode(app: &mut AppState, mode: ViewMode) {
             insert_column(app.list, 3, "Path", 600, false);
             populate_list_oldest_files(app);
         }
+        ViewMode::TempFiles => {
+            insert_column(app.list, 0, "Name", 240, false);
+            insert_column(app.list, 1, "Size", 100, true);
+            insert_column(app.list, 2, "Modified", 120, false);
+            insert_column(app.list, 3, "Source", 110, false);
+            insert_column(app.list, 4, "Folder", 550, false);
+            if app.temp_entries.is_empty() && !app.scanning {
+                start_temp_scan(hwnd, app);
+            } else {
+                populate_list_temp(app);
+            }
+        }
     }
 
     if !app.menu.is_invalid() {
@@ -1051,11 +1219,12 @@ unsafe fn apply_view_mode(app: &mut AppState, mode: ViewMode) {
             ViewMode::FolderTree => ID_MENU_VIEW_TREE,
             ViewMode::TopFiles => ID_MENU_VIEW_TOPFILES,
             ViewMode::OldestFiles => ID_MENU_VIEW_OLDEST,
+            ViewMode::TempFiles => ID_MENU_VIEW_TEMP,
         } as u32;
         let _ = CheckMenuRadioItem(
             app.menu,
             ID_MENU_VIEW_TREE as u32,
-            ID_MENU_VIEW_OLDEST as u32,
+            ID_MENU_VIEW_TEMP as u32,
             id,
             MF_BYCOMMAND.0,
         );
@@ -1099,6 +1268,26 @@ unsafe fn tree_item_lparam(tree: HWND, hti: isize) -> isize {
         LPARAM(&mut item as *mut _ as isize),
     );
     item.lParam.0
+}
+
+unsafe fn selected_indices(list: HWND) -> Vec<i32> {
+    let mut out = Vec::new();
+    let mut idx: i32 = -1;
+    loop {
+        let r = SendMessageW(
+            list,
+            LVM_GETNEXTITEM,
+            WPARAM(idx as usize),
+            LPARAM(LVNI_SELECTED as isize),
+        );
+        let next = r.0 as i32;
+        if next < 0 {
+            break;
+        }
+        out.push(next);
+        idx = next;
+    }
+    out
 }
 
 unsafe fn selected_list_index(list: HWND) -> i32 {
@@ -1323,22 +1512,33 @@ fn open_cmd_at(path: &str) {
 }
 
 fn recycle(path: &str) {
-    // SHFileOperationW needs a double-null-terminated path list.
+    recycle_many(&[path]);
+}
+
+// Bulk recycle via SHFileOperationW. pFrom is a double-null-terminated list
+// of single-null-terminated wide paths — one syscall regardless of count, so
+// the user sees one undoable operation in the Recycle Bin.
+fn recycle_many(paths: &[&str]) {
+    if paths.is_empty() {
+        return;
+    }
     unsafe {
-        let mut path_w: Vec<u16> = path.encode_utf16().collect();
-        path_w.push(0);
-        path_w.push(0);
-        let op = SHFILEOPSTRUCTW {
+        let mut buf: Vec<u16> = Vec::new();
+        for p in paths {
+            buf.extend(p.encode_utf16());
+            buf.push(0);
+        }
+        buf.push(0);
+        let mut op = SHFILEOPSTRUCTW {
             hwnd: HWND::default(),
             wFunc: FO_DELETE as u32,
-            pFrom: PCWSTR(path_w.as_ptr()),
+            pFrom: PCWSTR(buf.as_ptr()),
             pTo: PCWSTR::null(),
             fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION).0 as u16,
             fAnyOperationsAborted: false.into(),
             hNameMappings: std::ptr::null_mut(),
             lpszProgressTitle: PCWSTR::null(),
         };
-        let mut op = op;
         let _ = SHFileOperationW(&mut op);
     }
 }
