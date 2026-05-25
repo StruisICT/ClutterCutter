@@ -1,7 +1,7 @@
 // Console driver — invokes the scanner modules from the lib crate. Useful for
 // validating the scanners independently of the GUI.
 
-use cluttercutter::{analysis, mft, scanner, types};
+use cluttercutter::{analysis, mft, scanner, temp, types};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,7 +11,9 @@ fn main() {
     let mut use_mft = false;
     let mut top_n: usize = 0;
     let mut oldest_n: usize = 0;
-    // Strip --mft / --top-n N / --oldest-n N; remainder is the path.
+    let mut temp_mode = false;
+    // Strip --mft / --top-n N / --oldest-n N / --temp; remainder is the path
+    // (path is unused in --temp mode).
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -31,14 +33,26 @@ fn main() {
                     oldest_n = args.remove(i).parse().unwrap_or(0);
                 }
             }
+            "--temp" => {
+                temp_mode = true;
+                args.remove(i);
+            }
             _ => i += 1,
         }
     }
+
+    if temp_mode {
+        run_temp_scan();
+        return;
+    }
+
     let track_files = top_n > 0 || oldest_n > 0;
     let root = match args.into_iter().next() {
         Some(p) => p,
         None => {
-            eprintln!("usage: cluttercutter-cli.exe [--mft] [--top-n N] [--oldest-n N] <path>");
+            eprintln!(
+                "usage: cluttercutter-cli.exe [--mft] [--top-n N] [--oldest-n N] <path>\n       cluttercutter-cli.exe --temp"
+            );
             std::process::exit(2);
         }
     };
@@ -118,6 +132,41 @@ fn main() {
         for k in kids.iter().take(20) {
             println!("  {:>10}  {}", fmt_bytes(k.size), k.name);
         }
+    }
+}
+
+fn run_temp_scan() {
+    let locations = temp::discover_locations();
+    if locations.is_empty() {
+        eprintln!("No temp locations discovered.");
+        return;
+    }
+    eprintln!("Discovered {} locations:", locations.len());
+    for (src, p) in &locations {
+        eprintln!("  [{}] {}", src.label(), p);
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    let start = Instant::now();
+    let entries = temp::scan_locations(&locations, cancel);
+    let elapsed = start.elapsed();
+
+    let total: i64 = entries.iter().map(|e| e.size).sum();
+    println!(
+        "\n{} files — {} reclaimable across {} locations in {:.2}s",
+        entries.len(),
+        fmt_bytes(total),
+        locations.len(),
+        elapsed.as_secs_f64(),
+    );
+    println!("\nTop 30 by size:");
+    for e in entries.iter().take(30) {
+        let date = format_short_date(e.last_modified_ft);
+        println!(
+            "  {date}  {:>10}  [{}]  {}",
+            fmt_bytes(e.size),
+            e.source.label(),
+            e.full_path,
+        );
     }
 }
 
