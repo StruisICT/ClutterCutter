@@ -7,9 +7,9 @@ PublisherUrl: https://struisict.com
 PublisherSupportUrl: https://github.com/Struis112/ClutterCutter/issues
 PackageName: ClutterCutter
 PackageUrl: https://github.com/Struis112/ClutterCutter
-License: Proprietary
-LicenseUrl: https://github.com/Struis112/ClutterCutter/blob/main/README.md
-Copyright: Copyright (c) Struis ICT
+License: MIT
+LicenseUrl: https://github.com/Struis112/ClutterCutter/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Struis ICT
 ShortDescription: Fast disk-usage browser with NTFS MFT scanning.
 Description: |-
   ClutterCutter is a lightweight Windows disk-usage browser. On NTFS drives it
