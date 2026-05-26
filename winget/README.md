@@ -46,6 +46,5 @@ For each new tagged release:
   the alias `cluttercutter`.
 - The packaged binary is `ClutterCutter-rust.exe` (the self-contained Rust
   build), renamed by winget to match the `Commands` alias.
-- `License: Proprietary` is a placeholder. Add a real `LICENSE` file at the
-  repo root and switch this to a SPDX identifier (e.g. `MIT`) before the first
-  upstream PR — winget reviewers will likely ask.
+- Licensed MIT (see `LICENSE` at repo root). The locale manifest declares
+  `License: MIT` and `LicenseUrl` pointing at that file on `main`.
