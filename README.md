@@ -22,7 +22,7 @@ If ClutterCutter saves you time hunting down what's eating your disk, consider [
 
 ## Download
 
-Pre-built binaries are attached to each [GitHub Release](https://github.com/Struis112/ClutterCutter/releases). Just download `ClutterCutter.exe` and run it — it's a single self-contained file.
+Pre-built binaries are attached to each [GitHub Release](https://github.com/StruisICT/ClutterCutter/releases). Just download `ClutterCutter.exe` and run it — it's a single self-contained file.
 
 ## Building from source
 
@@ -65,7 +65,7 @@ When MFT mode is active, hard-linked files (which `WinSxS` uses heavily) are cou
 
 ## Repo
 
-Pushed and maintained at [Struis112/ClutterCutter](https://github.com/Struis112/ClutterCutter).
+Pushed and maintained at [StruisICT/ClutterCutter](https://github.com/StruisICT/ClutterCutter).
 
 ---
 

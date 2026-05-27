@@ -4,11 +4,11 @@ PackageVersion: 0.3.0
 PackageLocale: en-US
 Publisher: Struis ICT
 PublisherUrl: https://struisict.com
-PublisherSupportUrl: https://github.com/Struis112/ClutterCutter/issues
+PublisherSupportUrl: https://github.com/StruisICT/ClutterCutter/issues
 PackageName: ClutterCutter
-PackageUrl: https://github.com/Struis112/ClutterCutter
+PackageUrl: https://github.com/StruisICT/ClutterCutter
 License: MIT
-LicenseUrl: https://github.com/Struis112/ClutterCutter/blob/main/LICENSE
+LicenseUrl: https://github.com/StruisICT/ClutterCutter/blob/main/LICENSE
 Copyright: Copyright (c) 2026 Struis ICT
 ShortDescription: Fast disk-usage browser with NTFS MFT scanning.
 Description: |-
@@ -31,6 +31,6 @@ ReleaseNotes: |-
   - Adds Rust port of ClutterCutter alongside the original C# build.
   - Top-N largest files view (PR #10).
   - Oldest files by last-modified view (PR #12).
-ReleaseNotesUrl: https://github.com/Struis112/ClutterCutter/releases/tag/v0.3.0
+ReleaseNotesUrl: https://github.com/StruisICT/ClutterCutter/releases/tag/v0.3.0
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0

@@ -8,7 +8,7 @@ Commands:
 ReleaseDate: 2026-05-13
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/Struis112/ClutterCutter/releases/download/v0.3.0/ClutterCutter-rust.exe
+  InstallerUrl: https://github.com/StruisICT/ClutterCutter/releases/download/v0.3.0/ClutterCutter-rust.exe
   InstallerSha256: CE5C7358137105308C2696D749B89A7FFD10C7F21781D86C56673285F4B563CC
 ManifestType: installer
 ManifestVersion: 1.6.0
