@@ -27,6 +27,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read   # SignPath downloads the build artifact via the Actions API
 
 jobs:
   build:
@@ -112,6 +113,7 @@ jobs:
       # ---------- Artifact + release upload ----------
 
       - name: Upload artifact
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: ClutterCutter-${{ github.sha }}
@@ -119,6 +121,39 @@ jobs:
             ClutterCutter.exe
             ClutterCutter-rust.exe
           retention-days: 30
+
+      # ---------- Code signing (SignPath Foundation — free, forever, for OSS) ----------
+      # Inert until configured: set repo variable ENABLE_SIGNING=true plus the SignPath
+      # org/project/policy/artifact-configuration variables and the SIGNPATH_API_TOKEN
+      # secret (setup steps in AGENTS.md “Code signing”). Runs only for releases/tags so
+      # PR builds stay fast and need no secrets. SignPath signs the uploaded artifact and
+      # returns the signed exes into ./signed, which then replace the unsigned root exes
+      # so the Release assets (and the winget SHA computed from them) are the signed ones.
+      - name: Sign binaries (SignPath)
+        id: sign
+        if: >-
+          vars.ENABLE_SIGNING == 'true' &&
+          (github.event_name == 'release' ||
+           (github.event_name == 'workflow_dispatch' && inputs.tag != '') ||
+           startsWith(github.ref, 'refs/tags/v'))
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Replace unsigned exes with signed ones
+        if: steps.sign.outcome == 'success'
+        shell: pwsh
+        run: |
+          Copy-Item signed/ClutterCutter.exe      -Destination ClutterCutter.exe      -Force
+          Copy-Item signed/ClutterCutter-rust.exe -Destination ClutterCutter-rust.exe -Force
+          Write-Host "Replaced root exes with the SignPath-signed versions."
 
       - name: Attach exes to GitHub Release
         if: |

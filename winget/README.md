@@ -65,20 +65,26 @@ the manifest for you (`wingetcreate update StruisICT.ClutterCutter ...`).
 
 ## Updating for a new release
 
-For each new tagged release:
+The per-version manifest folder is generated automatically. Right after a
+release is published, the **winget manifest** workflow
+(`.github/workflows/winget-manifest.yml`) runs
+[`scripts/Update-WingetManifest.ps1`](../scripts/Update-WingetManifest.ps1) — it
+downloads the published `ClutterCutter-rust.exe`, computes its SHA256, writes the
+three 1.12.0 manifest files under `winget/manifests/.../<version>/`, and opens an
+**in-repo PR** adding them. It never touches `microsoft/winget-pkgs`.
 
-1. Bump `PackageVersion` in all three YAMLs (keep them in sync).
-2. Update `InstallerUrl` to point at the new release asset.
-3. Recompute `InstallerSha256` (uppercase hex, no separators):
-   ```bash
-   curl -L <url> | sha256sum | awk '{print toupper($1)}'
-   ```
-4. Update `ReleaseDate`, `ReleaseNotes`, and `ReleaseNotesUrl` in the locale
-   manifest.
-5. Keep the `# yaml-language-server` schema header and `ManifestVersion` on the
-   current schema (`1.12.0`).
-6. Validate locally and test the install (see commands above).
-7. Submit a new PR per the steps above (one version, manifest-only).
+- If the release was published via `GITHUB_TOKEN` (release-please) the workflow
+  may not auto-start — run it manually: **Actions → winget manifest → Run
+  workflow**, enter the version (e.g. `0.4.0`).
+- Or generate locally: `pwsh ./scripts/Update-WingetManifest.ps1 -Version 0.4.0`.
+
+Then, for the actual winget-pkgs submission:
+
+1. Review the generated PR — refine `ReleaseNotes`/`Description`, confirm the URL
+   and SHA256.
+2. Validate locally and test the install (see commands above).
+3. Copy the version folder into a `microsoft/winget-pkgs` fork and open that PR
+   (one version, manifest-only).
 
 > Because we cut releases with [release-please](../README.md#releasing) under
 > SemVer, the winget `PackageVersion` is always a sortable `MAJOR.MINOR.PATCH`,
@@ -95,12 +101,13 @@ For each new tagged release:
   build), renamed by winget to match the `Commands` alias.
 - Licensed MIT (see `LICENSE` at repo root). The locale manifest declares
   `License: MIT` and `LicenseUrl` pointing at that file on `main`.
-- **Unsigned-binary caveat (main risk):** `ClutterCutter-rust.exe` is not
-  code-signed, and it requests admin elevation + reads the raw NTFS volume
-  (`\\.\C:`) for the MFT fast path — exactly the kind of behavior heuristic
-  scanners flag. If the validation sandbox's Defender scan flags it, the PR is
-  rejected. Mitigations, in order of effort: (1) ensure the released exe is
-  clean and, if flagged, submit it to Microsoft for analysis / dispute the
-  detection; (2) consider Authenticode code-signing the release binaries to
-  build reputation. Signing is **not required** by winget but materially
-  reduces SmartScreen/Defender friction.
+- **Code signing (SignPath Foundation).** The release binaries are wired to be
+  Authenticode-signed for free via [SignPath Foundation](https://signpath.org)'s
+  OSS program — see **Code signing** in [`AGENTS.md`](../AGENTS.md) for the
+  one-time setup. Until that's enabled, the exe ships **unsigned**; since it
+  requests admin elevation and reads the raw NTFS volume (`\\.\C:`) for the MFT
+  fast path — behaviour heuristic scanners flag — an unsigned build is the most
+  likely cause of a winget validation-scan failure. Signing isn't *required* by
+  winget, but it materially reduces SmartScreen/Defender friction and gives users
+  a verifiable publisher. If a signed build is still flagged, submit it to
+  Microsoft for analysis / dispute the detection.
