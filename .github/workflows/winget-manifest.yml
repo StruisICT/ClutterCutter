@@ -1,0 +1,74 @@
+name: winget manifest
+
+# Right after a release, generate the winget manifest folder for that version and
+# open a PR that adds it to THIS repo. It never touches microsoft/winget-pkgs —
+# submitting there stays a deliberate manual step (fork + copy the folder + PR).
+#
+# Trigger notes (same constraint as build.yml): a Release published by
+# release-please via GITHUB_TOKEN may not start this workflow, so a manual
+# workflow_dispatch with the version is provided as the reliable path.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released version to generate the manifest for (e.g. 0.4.0)'
+        required: true
+        default: ''
+
+concurrency:
+  group: winget-manifest-${{ github.event.release.tag_name || github.event.inputs.version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate:
+    name: Generate winget manifest + open PR
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.event.inputs.version }}"
+          if (-not $v) { $v = ("${{ github.event.release.tag_name }}") -replace '^v','' }
+          if (-not $v) { throw "Could not resolve a version to generate." }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Generate manifest from the published release asset
+        shell: pwsh
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          $notes = if ($env:RELEASE_BODY) { $env:RELEASE_BODY } else { '' }
+          ./scripts/Update-WingetManifest.ps1 -Version ${{ steps.ver.outputs.version }} -ReleaseNotes $notes
+
+      - name: Open in-repo PR (not winget-pkgs)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $branch = "winget/$v"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b $branch
+          git add winget/manifests
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host "No manifest changes to commit."; exit 0 }
+          git commit -m "chore(winget): add manifest for v$v"
+          git push -u origin $branch
+          $body = @(
+            "Auto-generated winget manifest set for the v$v release (schema 1.12.0; SHA256 from the published ClutterCutter-rust.exe asset).",
+            "",
+            "Review/refine the ReleaseNotes and Description, then -- when you choose to -- copy winget/manifests/s/StruisICT/ClutterCutter/$v/ into a microsoft/winget-pkgs fork and open that PR.",
+            "",
+            "This PR does NOT submit to winget-pkgs."
+          ) -join "`n"
+          gh pr create --base main --head $branch --title "chore(winget): add manifest for v$v" --body $body

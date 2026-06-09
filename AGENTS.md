@@ -158,9 +158,42 @@ strict SemVer.
     secret would make tag→exe fully automatic.)
 - **Open release PR:** there's usually an auto "chore(main): release X.Y.Z" PR
   open — merge it when you want to cut that version.
-- **winget:** after a release, bump the three manifests + SHA256 and submit to
-  `microsoft/winget-pkgs`. Full steps in `winget/README.md`. The packaged binary
-  is `ClutterCutter-rust.exe` aliased to the `cluttercutter` command.
+- **winget:** right after a release, the **winget manifest** workflow
+  (`.github/workflows/winget-manifest.yml`) runs
+  `scripts/Update-WingetManifest.ps1` to generate the `1.12.0` manifest set
+  (SHA256 from the published asset) and open an **in-repo PR**. It never submits
+  to `microsoft/winget-pkgs` — that copy-into-a-fork step stays manual. If the
+  release was published by release-please (`GITHUB_TOKEN`) the workflow may not
+  auto-start; run it from **Actions → winget manifest** with the version. Full
+  steps + repo rules in `winget/README.md`. Packaged binary is
+  `ClutterCutter-rust.exe`, aliased to the `cluttercutter` command.
+
+## Code signing
+
+Release binaries are wired to be Authenticode-signed for **free** via
+[SignPath Foundation](https://signpath.org)'s open-source program (a verifiable
+publisher, forever). The signing step in `build.yml`
+(`signpath/github-action-submit-signing-request`) is **inert until configured**,
+so CI stays green unsigned. It runs only for releases/tags, signs the uploaded
+artifact, and the signed exes replace the unsigned ones before they're attached
+to the Release — so the winget SHA256 (computed from the published asset) matches
+the signed binary.
+
+One-time setup:
+
+1. Apply to the **SignPath Foundation** OSS program (signpath.org) and get an
+   organization. Create a **project** for ClutterCutter, an **artifact
+   configuration** that signs both `ClutterCutter.exe` and
+   `ClutterCutter-rust.exe`, and a **release signing policy**. Add **GitHub
+   Actions** as a trusted build system bound to `StruisICT/ClutterCutter`.
+2. In the GitHub repo → **Settings → Secrets and variables → Actions**, add:
+   - **Secret:** `SIGNPATH_API_TOKEN`
+   - **Variables:** `ENABLE_SIGNING=true`, `SIGNPATH_ORGANIZATION_ID`,
+     `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG`,
+     `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`.
+3. The next release's binaries are signed automatically. Until `ENABLE_SIGNING`
+   is `true`, builds remain unsigned (and that's fine — winget doesn't require
+   signing; it just reduces Defender/SmartScreen friction).
 
 ## Conventions
 
