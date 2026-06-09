@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0](https://github.com/StruisICT/ClutterCutter/compare/v0.3.0...v0.4.0) (2026-06-09)
+
+
+### Features
+
+* oldest-files view in the Rust port ([#12](https://github.com/StruisICT/ClutterCutter/issues/12)) ([9a5a41f](https://github.com/StruisICT/ClutterCutter/commit/9a5a41f9f26ecab281158c174ad09b0daf15b82a))
+* safe-to-delete temp files view in the Rust port ([#14](https://github.com/StruisICT/ClutterCutter/issues/14)) ([fcb57ab](https://github.com/StruisICT/ClutterCutter/commit/fcb57ab9977f8702bb0a2d8d7de179e95a852065))
+* top-N largest files view in the Rust port ([#10](https://github.com/StruisICT/ClutterCutter/issues/10)) ([6b0f914](https://github.com/StruisICT/ClutterCutter/commit/6b0f914a34a8ea2df53a7138304d07e01ed059ff))
+
 ## [0.3.0](https://github.com/Struis112/ClutterCutter/compare/v0.2.1...v0.3.0) (2026-05-13)
 
 
