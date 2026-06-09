@@ -63,7 +63,7 @@ jobs:
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 0) { Write-Host "No manifest changes to commit."; exit 0 }
           git commit -m "chore(winget): add manifest for v$v"
-          git push -u origin $branch
+          git push -u origin $branch --force-with-lease
           $body = @(
             "Auto-generated winget manifest set for the v$v release (schema 1.12.0; SHA256 from the published ClutterCutter-rust.exe asset).",
             "",
@@ -72,3 +72,8 @@ jobs:
             "This PR does NOT submit to winget-pkgs."
           ) -join "`n"
           gh pr create --base main --head $branch --title "chore(winget): add manifest for v$v" --body $body
+          if ($LASTEXITCODE -ne 0) {
+            $url = "https://github.com/${{ github.repository }}/compare/main...${branch}?expand=1"
+            Write-Host "::warning::Could not open the PR automatically — the org's 'Allow GitHub Actions to create and approve pull requests' setting is likely off. The branch '$branch' is pushed and ready; open the PR here: $url"
+            exit 0
+          }
