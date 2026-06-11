@@ -146,12 +146,16 @@ pub fn scan_locations(
         };
         collect(&root, *src, &mut out);
     }
-    out.sort_by(|a, b| b.size.cmp(&a.size));
+    out.sort_by_key(|e| std::cmp::Reverse(e.size));
     out
 }
 
 fn collect(node: &FolderNode, src: TempSource, out: &mut Vec<TempFileEntry>) {
-    let sep = if node.full_path.ends_with('\\') { "" } else { "\\" };
+    let sep = if node.full_path.ends_with('\\') {
+        ""
+    } else {
+        "\\"
+    };
     for f in &node.files {
         out.push(TempFileEntry {
             full_path: format!("{}{}{}", node.full_path, sep, f.name),

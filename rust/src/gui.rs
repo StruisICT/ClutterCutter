@@ -22,9 +22,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use windows::core::{w, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{BOOL, FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM};
+use windows::Win32::Foundation::{
+    BOOL, FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
+};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
-use windows::Win32::Graphics::Gdi::{GetSysColorBrush, InvalidateRect, UpdateWindow, COLOR_BTNFACE};
+use windows::Win32::Graphics::Gdi::{
+    GetSysColorBrush, InvalidateRect, UpdateWindow, COLOR_BTNFACE,
+};
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
 };
@@ -55,7 +59,7 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::Shell::{
-    SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE, IsUserAnAdmin, ShellExecuteW,
+    IsUserAnAdmin, SHFileOperationW, ShellExecuteW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE,
     SHFILEOPSTRUCTW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -64,12 +68,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetMessageW, GetWindowLongPtrW, LoadCursorW, LoadIconW, MessageBoxW, MoveWindow,
     PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow, SetMenu,
     SetWindowLongPtrW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
-    BS_PUSHBUTTON, CREATESTRUCTW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HACCEL, HMENU,
-    IDC_ARROW, IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MSG, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_NOTIFY, WM_SIZE,
-    WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP,
-    WS_VISIBLE,
+    BS_PUSHBUTTON, CREATESTRUCTW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HMENU, IDC_ARROW,
+    IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING,
+    MSG, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_NOTIFY, WM_SIZE, WNDCLASSEXW, WS_BORDER,
+    WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -283,7 +286,7 @@ pub fn run() {
             accel(VK_RETURN, ID_ACC_DRILL),
             accel(VK_DELETE, ID_ACC_DELETE),
         ];
-        let haccel = CreateAcceleratorTableW(&accels).unwrap_or(HACCEL::default());
+        let haccel = CreateAcceleratorTableW(&accels).unwrap_or_default();
 
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
@@ -482,10 +485,9 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
                 on_tree_select(app);
             }
             c if c == TVN_ITEMEXPANDINGW => {
-                let info = &*(lparam.0
-                    as *const windows::Win32::UI::Controls::NMTREEVIEWW);
+                let info = &*(lparam.0 as *const windows::Win32::UI::Controls::NMTREEVIEWW);
                 if info.action == TVE_EXPAND {
-                    on_tree_expand(app, info.itemNew.hItem.0 as isize);
+                    on_tree_expand(app, info.itemNew.hItem.0);
                 }
             }
             _ => {}
@@ -526,7 +528,11 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         let label = format!(
             "{}:\\  {}\n{} / {}",
             drive.letter,
-            if drive.label.is_empty() { "(no label)" } else { &drive.label },
+            if drive.label.is_empty() {
+                "(no label)"
+            } else {
+                &drive.label
+            },
             format_bytes((drive.total_bytes - drive.free_bytes) as i64),
             format_bytes(drive.total_bytes as i64),
         );
@@ -604,8 +610,8 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         WS_CHILD
             | WS_VISIBLE
             | WS_TABSTOP
-            | WINDOW_STYLE(LVS_REPORT as u32)
-            | WINDOW_STYLE(LVS_SHOWSELALWAYS as u32),
+            | WINDOW_STYLE(LVS_REPORT)
+            | WINDOW_STYLE(LVS_SHOWSELALWAYS),
         320,
         80,
         780,
@@ -618,7 +624,12 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     .expect("listview");
 
     let ext = (LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER) as isize;
-    SendMessageW(app.list, LVM_SETEXTENDEDLISTVIEWSTYLE, WPARAM(0), LPARAM(ext));
+    SendMessageW(
+        app.list,
+        LVM_SETEXTENDEDLISTVIEWSTYLE,
+        WPARAM(0),
+        LPARAM(ext),
+    );
     insert_column(app.list, 0, "Name", 320, false);
     insert_column(app.list, 1, "Size", 130, true);
     insert_column(app.list, 2, "Files", 100, true);
@@ -629,7 +640,10 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     } else {
         "Ready (not elevated — FindFirstFile walker on all drives)"
     };
-    let init_w: Vec<u16> = status_initial.encode_utf16().chain(std::iter::once(0)).collect();
+    let init_w: Vec<u16> = status_initial
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     app.status = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("msctls_statusbar32"),
@@ -654,7 +668,12 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let menu = CreateMenu().expect("CreateMenu");
 
     let file_pop = CreatePopupMenu().expect("CreatePopupMenu file");
-    let _ = AppendMenuW(file_pop, MF_STRING, ID_MENU_REFRESH as usize, w!("&Refresh\tF5"));
+    let _ = AppendMenuW(
+        file_pop,
+        MF_STRING,
+        ID_MENU_REFRESH as usize,
+        w!("&Refresh\tF5"),
+    );
     if !app.is_admin {
         let _ = AppendMenuW(
             file_pop,
@@ -668,7 +687,12 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let _ = AppendMenuW(menu, MF_POPUP, file_pop.0 as usize, w!("&File"));
 
     let view_pop = CreatePopupMenu().expect("CreatePopupMenu view");
-    let _ = AppendMenuW(view_pop, MF_STRING, ID_MENU_VIEW_TREE as usize, w!("&Folder tree"));
+    let _ = AppendMenuW(
+        view_pop,
+        MF_STRING,
+        ID_MENU_VIEW_TREE as usize,
+        w!("&Folder tree"),
+    );
     let _ = AppendMenuW(
         view_pop,
         MF_STRING,
@@ -689,14 +713,34 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     );
     let _ = AppendMenuW(view_pop, MF_SEPARATOR, 0, PCWSTR::null());
     let theme_pop = CreatePopupMenu().expect("CreatePopupMenu theme");
-    let _ = AppendMenuW(theme_pop, MF_STRING, ID_MENU_THEME_AUTO as usize, w!("&Auto (system)"));
-    let _ = AppendMenuW(theme_pop, MF_STRING, ID_MENU_THEME_LIGHT as usize, w!("&Light"));
-    let _ = AppendMenuW(theme_pop, MF_STRING, ID_MENU_THEME_DARK as usize, w!("&Dark"));
+    let _ = AppendMenuW(
+        theme_pop,
+        MF_STRING,
+        ID_MENU_THEME_AUTO as usize,
+        w!("&Auto (system)"),
+    );
+    let _ = AppendMenuW(
+        theme_pop,
+        MF_STRING,
+        ID_MENU_THEME_LIGHT as usize,
+        w!("&Light"),
+    );
+    let _ = AppendMenuW(
+        theme_pop,
+        MF_STRING,
+        ID_MENU_THEME_DARK as usize,
+        w!("&Dark"),
+    );
     let _ = AppendMenuW(view_pop, MF_POPUP, theme_pop.0 as usize, w!("T&heme"));
     let _ = AppendMenuW(menu, MF_POPUP, view_pop.0 as usize, w!("&View"));
 
     let help_pop = CreatePopupMenu().expect("CreatePopupMenu help");
-    let _ = AppendMenuW(help_pop, MF_STRING, ID_MENU_ABOUT as usize, w!("&About ClutterCutter"));
+    let _ = AppendMenuW(
+        help_pop,
+        MF_STRING,
+        ID_MENU_ABOUT as usize,
+        w!("&About ClutterCutter"),
+    );
     let _ = AppendMenuW(menu, MF_POPUP, help_pop.0 as usize, w!("&Help"));
 
     let _ = SetMenu(hwnd, menu);
@@ -742,14 +786,18 @@ unsafe fn start_scan(hwnd: HWND, app: &mut AppState, path: String, use_mft: bool
         *s = ScanState::default();
     }
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
-    SendMessageW(app.tree, TVM_DELETEITEM, WPARAM(0), LPARAM(TVI_ROOT.0 as isize));
+    SendMessageW(app.tree, TVM_DELETEITEM, WPARAM(0), LPARAM(TVI_ROOT.0));
     app.root_node = None;
     app.item_by_node.clear();
     app.populated.clear();
     app.selected_node = 0;
     set_status(
         app.status,
-        &format!("Scanning {} ({})...", path, if use_mft { "MFT" } else { "walker" }),
+        &format!(
+            "Scanning {} ({})...",
+            path,
+            if use_mft { "MFT" } else { "walker" }
+        ),
     );
     app.last_scan = Some((path.clone(), use_mft));
     app.cancel.store(false, Ordering::SeqCst);
@@ -860,7 +908,12 @@ unsafe fn on_scan_done(app: &mut AppState) {
         let hti = insert_tree_item(app.tree, 0, root);
         app.item_by_node.insert(root_ptr as isize, hti);
         populate_children(app, hti, root);
-        SendMessageW(app.tree, TVM_SELECTITEM, WPARAM(TVGN_CARET as usize), LPARAM(hti));
+        SendMessageW(
+            app.tree,
+            TVM_SELECTITEM,
+            WPARAM(TVGN_CARET as usize),
+            LPARAM(hti),
+        );
     }
     // The tree-selection above repopulates the listview for the FolderTree view.
     // File-based views ignore tree selection; populate the global ranking directly.
@@ -879,7 +932,7 @@ unsafe fn populate_children(app: &mut AppState, parent_hti: isize, parent: &Fold
         return;
     }
     let mut kids: Vec<&FolderNode> = parent.children.iter().collect();
-    kids.sort_by(|a, b| b.size.cmp(&a.size));
+    kids.sort_by_key(|n| std::cmp::Reverse(n.size));
     for c in kids {
         // Only insert subdirectories as tree items; leaf-like nodes (no children)
         // still appear because every FolderNode here is a directory.
@@ -890,11 +943,7 @@ unsafe fn populate_children(app: &mut AppState, parent_hti: isize, parent: &Fold
 }
 
 unsafe fn insert_tree_item(tree: HWND, parent_hti: isize, node: &FolderNode) -> isize {
-    let mut name_w: Vec<u16> = node
-        .name
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
+    let mut name_w: Vec<u16> = node.name.encode_utf16().chain(std::iter::once(0)).collect();
     let has_children = if node.children.is_empty() { 0 } else { 1 };
     let item = TVITEMW {
         mask: TVIF_TEXT | TVIF_PARAM | TVIF_CHILDREN,
@@ -966,7 +1015,7 @@ unsafe fn populate_list(app: &AppState, node: &FolderNode) {
 unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     let mut kids: Vec<&FolderNode> = node.children.iter().collect();
-    kids.sort_by(|a, b| b.size.cmp(&a.size));
+    kids.sort_by_key(|n| std::cmp::Reverse(n.size));
     for (i, k) in kids.iter().enumerate() {
         insert_row_with_param(
             app.list,
@@ -1041,7 +1090,10 @@ unsafe fn start_temp_scan(hwnd: HWND, app: &mut AppState) {
         .map(|(s, _)| s.label())
         .collect::<Vec<_>>()
         .join(", ");
-    set_status(app.status, &format!("Scanning temp locations: {summary}..."));
+    set_status(
+        app.status,
+        &format!("Scanning temp locations: {summary}..."),
+    );
     app.cancel.store(false, Ordering::SeqCst);
     app.scanning = true;
     let _ = EnableWindow(app.stop_btn, true);
@@ -1335,11 +1387,26 @@ unsafe fn show_context_menu(hwnd: HWND, _app: &AppState) {
         Ok(m) => m,
         Err(_) => return,
     };
-    let _ = AppendMenuW(menu, MF_STRING, ID_CTX_OPEN as usize, w!("Open in Explorer"));
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_CTX_OPEN as usize,
+        w!("Open in Explorer"),
+    );
     let _ = AppendMenuW(menu, MF_STRING, ID_CTX_COPY as usize, w!("Copy path"));
-    let _ = AppendMenuW(menu, MF_STRING, ID_CTX_CMD as usize, w!("Open Command Prompt here"));
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_CTX_CMD as usize,
+        w!("Open Command Prompt here"),
+    );
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    let _ = AppendMenuW(menu, MF_STRING, ID_CTX_RECYCLE as usize, w!("Move to Recycle Bin"));
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_CTX_RECYCLE as usize,
+        w!("Move to Recycle Bin"),
+    );
 
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
@@ -1452,15 +1519,18 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
 // ---- About dialog + admin relaunch ----
 
 unsafe fn show_about(hwnd: HWND) {
-    let text = w!(
-        "ClutterCutter — Rust port\n\
+    let text = w!("ClutterCutter — Rust port\n\
          Version 0.0.1\n\
          © Struis ICT\n\
          \n\
          Lightweight Windows disk-usage browser.\n\
-         FindFirstFileEx walker + NTFS MFT fast path."
+         FindFirstFileEx walker + NTFS MFT fast path.");
+    let _ = MessageBoxW(
+        hwnd,
+        text,
+        w!("About ClutterCutter"),
+        MB_OK | MB_ICONINFORMATION,
     );
-    let _ = MessageBoxW(hwnd, text, w!("About ClutterCutter"), MB_OK | MB_ICONINFORMATION);
 }
 
 fn relaunch_elevated() {
@@ -1531,7 +1601,7 @@ fn recycle_many(paths: &[&str]) {
         buf.push(0);
         let mut op = SHFILEOPSTRUCTW {
             hwnd: HWND::default(),
-            wFunc: FO_DELETE as u32,
+            wFunc: FO_DELETE,
             pFrom: PCWSTR(buf.as_ptr()),
             pTo: PCWSTR::null(),
             fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION).0 as u16,
@@ -1556,7 +1626,10 @@ fn copy_to_clipboard(hwnd: HWND, text: &str) {
             if !ptr.is_null() {
                 std::ptr::copy_nonoverlapping(utf16.as_ptr(), ptr, utf16.len());
                 let _ = GlobalUnlock(h);
-                let _ = SetClipboardData(CF_UNICODETEXT.0 as u32, windows::Win32::Foundation::HANDLE(h.0));
+                let _ = SetClipboardData(
+                    CF_UNICODETEXT.0 as u32,
+                    windows::Win32::Foundation::HANDLE(h.0),
+                );
             }
         }
         let _ = CloseClipboard();
@@ -1626,7 +1699,11 @@ unsafe fn insert_column(list: HWND, idx: i32, title: &str, width: i32, right_ali
     let mut text: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     let col = LVCOLUMNW {
         mask: LVCF_TEXT | LVCF_WIDTH | LVCF_FMT,
-        fmt: if right_align { LVCFMT_RIGHT } else { LVCFMT_LEFT },
+        fmt: if right_align {
+            LVCFMT_RIGHT
+        } else {
+            LVCFMT_LEFT
+        },
         cx: width,
         pszText: PWSTR(text.as_mut_ptr()),
         ..Default::default()

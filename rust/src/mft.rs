@@ -39,6 +39,12 @@ pub struct MftScanner {
     start: Instant,
 }
 
+impl Default for MftScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MftScanner {
     pub fn new() -> Self {
         Self {
@@ -144,15 +150,8 @@ impl MftScanner {
 
                 unsafe { set_pos(h, pos)? };
                 let mut bytes_read: u32 = 0;
-                unsafe {
-                    ReadFile(
-                        h,
-                        Some(&mut buf[..to_read]),
-                        Some(&mut bytes_read),
-                        None,
-                    )
-                }
-                .map_err(|e| format!("ReadFile MFT failed: {e}"))?;
+                unsafe { ReadFile(h, Some(&mut buf[..to_read]), Some(&mut bytes_read), None) }
+                    .map_err(|e| format!("ReadFile MFT failed: {e}"))?;
                 if bytes_read == 0 {
                     break;
                 }
@@ -320,12 +319,21 @@ impl MftScanner {
         }
 
         let root_path = format!("{drive}:\\");
-        let mut root_node = FolderNode::default();
-        root_node.full_path = root_path.clone();
-        root_node.name = root_path.clone();
-        root_node.last_modified_ft = entries[&5].last_write_ft;
+        let mut root_node = FolderNode {
+            full_path: root_path.clone(),
+            name: root_path.clone(),
+            last_modified_ft: entries[&5].last_write_ft,
+            ..Default::default()
+        };
 
-        build_subtree(5, &mut root_node, &root_path, &entries, &kids, self.track_files);
+        build_subtree(
+            5,
+            &mut root_node,
+            &root_path,
+            &entries,
+            &kids,
+            self.track_files,
+        );
         Ok(root_node)
     }
 
@@ -351,7 +359,8 @@ impl MftScanner {
         let mft_total = self.mft_bytes_total.load(Ordering::Relaxed);
         // Reserve the last 5% for tree-build; cap read-progress at 95%.
         let percent = if mft_total > 0 {
-            let pct = 95.0 * (self.mft_bytes_read.load(Ordering::Relaxed) as f64) / (mft_total as f64);
+            let pct =
+                95.0 * (self.mft_bytes_read.load(Ordering::Relaxed) as f64) / (mft_total as f64);
             pct.clamp(0.0, 95.0)
         } else {
             -1.0
@@ -599,11 +608,20 @@ fn build_subtree(
             } else {
                 format!("{node_path}\\{}", c.name)
             };
-            let mut child = FolderNode::default();
-            child.full_path = child_path.clone();
-            child.name = c.name.clone();
-            child.last_modified_ft = c.last_write_ft;
-            build_subtree(child_frn, &mut child, &child_path, entries, kids, track_files);
+            let mut child = FolderNode {
+                full_path: child_path.clone(),
+                name: c.name.clone(),
+                last_modified_ft: c.last_write_ft,
+                ..Default::default()
+            };
+            build_subtree(
+                child_frn,
+                &mut child,
+                &child_path,
+                entries,
+                kids,
+                track_files,
+            );
             node.size += child.size;
             node.file_count += child.file_count;
             node.folder_count += child.folder_count + 1;
@@ -652,7 +670,14 @@ fn u32_le(b: &[u8], o: usize) -> u32 {
 #[inline]
 fn i64_le(b: &[u8], o: usize) -> i64 {
     i64::from_le_bytes([
-        b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6], b[o + 7],
+        b[o],
+        b[o + 1],
+        b[o + 2],
+        b[o + 3],
+        b[o + 4],
+        b[o + 5],
+        b[o + 6],
+        b[o + 7],
     ])
 }
 
