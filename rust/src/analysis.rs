@@ -79,7 +79,7 @@ pub fn top_n_files(root: &FolderNode, n: usize) -> Vec<FileHit<'_>> {
             folder: h.folder,
         })
         .collect();
-    out.sort_by(|a, b| b.file.size.cmp(&a.file.size));
+    out.sort_by_key(|h| std::cmp::Reverse(h.file.size));
     out
 }
 
@@ -155,6 +155,6 @@ pub fn oldest_n_files(root: &FolderNode, n: usize) -> Vec<FileHit<'_>> {
             folder: h.folder,
         })
         .collect();
-    out.sort_by(|a, b| a.file.last_modified_ft.cmp(&b.file.last_modified_ft));
+    out.sort_by_key(|a| a.file.last_modified_ft);
     out
 }
