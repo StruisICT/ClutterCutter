@@ -42,10 +42,11 @@ rust/                       # Rust port
   Cargo.toml                # crate = "cluttercutter"; version kept in sync with the release version by release-please (publish=false)
   src/main.rs               #   GUI entry (#![windows_subsystem="windows"]) -> gui::run()
   src/lib.rs                #   module list
-  src/gui.rs                #   Win32 window/message-loop/WndProc, all views (~1.7k lines)
+  src/gui.rs                #   Win32 window/message-loop/WndProc, all views (~2.3k lines)
   src/scanner.rs            #   FindFirstFileExW recursive walker (LARGE_FETCH, parallel top-level fan-out)
   src/mft.rs                #   NTFS MFT parser via \\.\C: raw volume reads (admin fast path)
   src/analysis.rs           #   pure tree-walk queries: top_n_files, oldest_n_files (bounded heaps)
+  src/treemap.rs            #   pure squarified-treemap layout (unit-tested; GUI paints it via GDI)
   src/temp.rs               #   discover + scan "safe-to-delete" temp/cache locations
   src/types.rs              #   FolderNode / FileEntry / ScanProgress (mirror of the C# shapes)
   src/bin/cli.rs            #   console harness to exercise scanners without the GUI
@@ -98,15 +99,22 @@ cargo run --bin cluttercutter-cli -- --temp        # enumerate safe-to-delete te
 ## Feature parity (Rust port vs C#)
 
 The Rust GUI (`gui.rs`) already implements: drive buttons with auto MFT-vs-walker
-selection, tree + size-sorted list, drill-in/breadcrumb-by-parent, four view
-modes (**Tree**, **Top largest files**, **Oldest files**, **Temp files**),
-Dark/Light/Auto theme (incl. immersive dark title bar via DWM), the right-click
-context menu (Open in Explorer / Copy path / Cmd here / Recycle), and the
-keyboard shortcuts (F5 rescan, Esc stop, Backspace parent, Enter drill, Del
-recycle), plus the elevation prompt and About box.
+selection, tree + size-sorted list, drill-in/breadcrumb-by-parent, five view
+modes (**Tree**, **Treemap**, **Top largest files**, **Oldest files**, **Temp
+files**), Dark/Light/Auto theme (incl. immersive dark title bar via DWM), the
+right-click context menu (Open in Explorer / Copy path / Cmd here / Recycle),
+and the keyboard shortcuts (F5 rescan, Esc stop, Backspace parent, Enter drill,
+Del recycle), plus the elevation prompt and About box.
 
 When adding a feature, check the C# app (`ClutterCutter.cs`) for the reference
 behavior and match it. If you intentionally diverge, note it here.
+
+**Intentional divergences (Rust-only):**
+- **Treemap view** (View ▸ Treemap): WinDirStat-style squarified treemap of the
+  current tree selection, custom-painted GDI child window replacing the
+  listview. Hover shows path+size in the status bar, click selects,
+  double-click a folder tile drills (syncs the tree), right-click opens the
+  shared context menu, Del recycles. The C# app has no treemap.
 
 ## Versioning (SemVer)
 
@@ -221,14 +229,14 @@ Rust port.
 
 ## Status & next steps
 
-_Last updated: 2026-06-09._
+_Last updated: 2026-07-10._
 
 - Released: **v0.3.0**. The open release-please PR now resolves to **0.4.0**
   (the unreleased top-N / oldest / temp-files `feat:` commits bump the minor
   under SemVer, after switching `bump-patch-for-minor-pre-major` off).
 - Rust port is at/near parity with the C# app (see Feature parity above).
+- Treemap view shipped in the Rust port (see Intentional divergences above).
 - Ideas / candidate next work (none committed yet — confirm before building):
-  - Treemap / visual size view.
   - Bulk-delete from the Temp-files view (currently per-row recycle).
   - Persisted theme/window state (C# uses `theme.cfg`, which is gitignored).
   - Make the Rust build the primary release artifact and retire the C# build

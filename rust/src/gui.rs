@@ -16,18 +16,21 @@ use crate::analysis::{oldest_n_files, top_n_files};
 use crate::mft::{is_ntfs_drive_root, MftScanner};
 use crate::scanner::{wide, wstr_to_string, ProgressFn, Scanner};
 use crate::temp::{self, TempFileEntry};
-use crate::types::{FolderNode, ScanProgress};
+use crate::treemap::{self, Rectf};
+use crate::types::{FileEntry, FolderNode, ScanProgress};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    BOOL, FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
+    BOOL, COLORREF, FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
-    GetSysColorBrush, InvalidateRect, UpdateWindow, COLOR_BTNFACE,
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC,
+    DeleteObject, EndPaint, FillRect, FrameRect, GetSysColorBrush, InvalidateRect, SelectObject,
+    UpdateWindow, COLOR_BTNFACE, HBRUSH, PAINTSTRUCT, SRCCOPY,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -68,11 +71,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetMessageW, GetWindowLongPtrW, LoadCursorW, LoadIconW, MessageBoxW, MoveWindow,
     PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow, SetMenu,
     SetWindowLongPtrW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
-    BS_PUSHBUTTON, CREATESTRUCTW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HMENU, IDC_ARROW,
-    IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING,
-    MSG, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_NOTIFY, WM_SIZE, WNDCLASSEXW, WS_BORDER,
-    WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    BS_PUSHBUTTON, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY,
+    GWLP_USERDATA, HMENU, IDC_ARROW, IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MF_BYCOMMAND,
+    MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY,
+    WM_ERASEBKGND, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_NCCREATE, WM_NOTIFY,
+    WM_PAINT, WM_RBUTTONDOWN, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE,
+    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -80,6 +85,7 @@ const ID_DRIVE_BASE: u16 = 1000;
 const ID_STOP_BTN: u16 = 200;
 const ID_LIST: u16 = 300;
 const ID_TREE: u16 = 301;
+const ID_TREEMAP: u16 = 302;
 const ID_STATUS: u16 = 400;
 
 // Accelerator + context-menu IDs share the WM_COMMAND space.
@@ -106,9 +112,15 @@ const ID_MENU_VIEW_TREE: u16 = 5301;
 const ID_MENU_VIEW_TOPFILES: u16 = 5302;
 const ID_MENU_VIEW_OLDEST: u16 = 5303;
 const ID_MENU_VIEW_TEMP: u16 = 5304;
+const ID_MENU_VIEW_TREEMAP: u16 = 5305;
 
 // Number of files shown in the file-based views (top largest / oldest).
 const TOP_N_FILES: usize = 100;
+
+// Treemap tiles thinner than this many pixels aren't emitted (and their
+// subtrees aren't descended into) — they'd be invisible anyway.
+const TREEMAP_MIN_PX: f64 = 3.0;
+const TREEMAP_MAX_DEPTH: u32 = 24;
 
 // Custom messages
 const WM_APP_PROGRESS: u32 = WM_APP + 1;
@@ -157,6 +169,21 @@ enum ViewMode {
     TopFiles,
     OldestFiles,
     TempFiles,
+    Treemap,
+}
+
+// One painted tile of the treemap. Raw pointers into the pinned root_node
+// tree — same lifetime argument as the tree/list lParams: the scan result is
+// never mutated after completion, and the entries are cleared in start_scan
+// before the old tree drops.
+struct TreemapEntry {
+    rect: RECT,
+    // Owning folder: the folder itself for folder tiles, the containing
+    // folder for file tiles.
+    folder: *const FolderNode,
+    file: *const FileEntry, // null for folder tiles
+    depth: u32,
+    hue_idx: usize,
 }
 
 struct AppState {
@@ -165,6 +192,7 @@ struct AppState {
     stop_btn: HWND,
     tree: HWND,
     list: HWND,
+    treemap: HWND,
     status: HWND,
 
     scanning: bool,
@@ -193,6 +221,13 @@ struct AppState {
     // the known "safe-to-delete" temp locations. Populated by start_temp_scan.
     temp_entries: Vec<TempFileEntry>,
     temp_shared: Arc<Mutex<Option<Vec<TempFileEntry>>>>,
+
+    // Treemap view: laid-out tiles in paint order (parents before children,
+    // so reverse hit-testing finds the deepest tile), plus selection/hover
+    // indices into that Vec (-1 = none).
+    treemap_entries: Vec<TreemapEntry>,
+    treemap_selected: i32,
+    treemap_hover: i32,
 }
 
 #[derive(Copy, Clone)]
@@ -243,6 +278,7 @@ pub fn run() {
             stop_btn: HWND::default(),
             tree: HWND::default(),
             list: HWND::default(),
+            treemap: HWND::default(),
             status: HWND::default(),
             scanning: false,
             cancel: Arc::new(AtomicBool::new(false)),
@@ -259,6 +295,9 @@ pub fn run() {
             view_mode: ViewMode::FolderTree,
             temp_entries: Vec::new(),
             temp_shared: Arc::new(Mutex::new(None)),
+            treemap_entries: Vec::new(),
+            treemap_selected: -1,
+            treemap_hover: -1,
         });
         let app_ptr = Box::into_raw(app);
 
@@ -392,6 +431,7 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
         ID_MENU_VIEW_TOPFILES => apply_view_mode(hwnd, app, ViewMode::TopFiles),
         ID_MENU_VIEW_OLDEST => apply_view_mode(hwnd, app, ViewMode::OldestFiles),
         ID_MENU_VIEW_TEMP => apply_view_mode(hwnd, app, ViewMode::TempFiles),
+        ID_MENU_VIEW_TREEMAP => apply_view_mode(hwnd, app, ViewMode::Treemap),
         ID_MENU_REFRESH | ID_ACC_REFRESH => {
             if !app.scanning {
                 match app.view_mode {
@@ -436,8 +476,19 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
             }
         }
         ID_ACC_DRILL | ID_CTX_OPEN => {
-            // Drill into the selected list row by selecting its tree item
-            if let Some(node) = selected_list_node(app) {
+            if app.view_mode == ViewMode::Treemap {
+                if let Some((folder, file)) = treemap_selected_ptrs(app) {
+                    if id == ID_ACC_DRILL {
+                        if file.is_null() {
+                            select_tree_node(app, folder);
+                        }
+                    } else {
+                        // Files open their containing folder; folders open themselves.
+                        open_in_explorer(&(*folder).full_path);
+                    }
+                }
+            } else if let Some(node) = selected_list_node(app) {
+                // Drill into the selected list row by selecting its tree item
                 if id == ID_ACC_DRILL {
                     let p = node as *const _ as isize;
                     if let Some(&hti) = app.item_by_node.get(&p) {
@@ -457,12 +508,20 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
             handle_recycle(hwnd, app);
         }
         ID_CTX_COPY => {
-            if let Some(node) = selected_list_node(app) {
+            if app.view_mode == ViewMode::Treemap {
+                if let Some(path) = treemap_selected_path(app) {
+                    copy_to_clipboard(hwnd, &path);
+                }
+            } else if let Some(node) = selected_list_node(app) {
                 copy_to_clipboard(hwnd, &node.full_path);
             }
         }
         ID_CTX_CMD => {
-            if let Some(node) = selected_list_node(app) {
+            if app.view_mode == ViewMode::Treemap {
+                if let Some((folder, _)) = treemap_selected_ptrs(app) {
+                    open_cmd_at(&(*folder).full_path);
+                }
+            } else if let Some(node) = selected_list_node(app) {
                 open_cmd_at(&node.full_path);
             }
         }
@@ -630,6 +689,37 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         WPARAM(0),
         LPARAM(ext),
     );
+
+    // Treemap canvas — custom-painted sibling of the listview, shown only in
+    // Treemap view. Its WndProc finds AppState via its own GWLP_USERDATA.
+    let tm_class = w!("ClutterCutterTreemap");
+    let tm_wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
+        lpfnWndProc: Some(treemap_proc),
+        hInstance: hinstance.into(),
+        hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
+        hbrBackground: HBRUSH::default(), // fully painted in WM_PAINT
+        lpszClassName: tm_class,
+        ..Default::default()
+    };
+    RegisterClassExW(&tm_wc);
+    app.treemap = CreateWindowExW(
+        WS_EX_CLIENTEDGE,
+        tm_class,
+        PCWSTR::null(),
+        WS_CHILD, // hidden until the Treemap view is activated
+        320,
+        80,
+        780,
+        500,
+        hwnd,
+        HMENU(ID_TREEMAP as isize as _),
+        hinstance,
+        None,
+    )
+    .expect("treemap");
+    SetWindowLongPtrW(app.treemap, GWLP_USERDATA, app as *mut AppState as isize);
     insert_column(app.list, 0, "Name", 320, false);
     insert_column(app.list, 1, "Size", 130, true);
     insert_column(app.list, 2, "Files", 100, true);
@@ -696,6 +786,12 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let _ = AppendMenuW(
         view_pop,
         MF_STRING,
+        ID_MENU_VIEW_TREEMAP as usize,
+        w!("Tree&map"),
+    );
+    let _ = AppendMenuW(
+        view_pop,
+        MF_STRING,
         ID_MENU_VIEW_TOPFILES as usize,
         w!("&Top largest files"),
     );
@@ -758,7 +854,7 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let _ = CheckMenuRadioItem(
         menu,
         ID_MENU_VIEW_TREE as u32,
-        ID_MENU_VIEW_TEMP as u32,
+        ID_MENU_VIEW_TREEMAP as u32,
         ID_MENU_VIEW_TREE as u32,
         MF_BYCOMMAND.0,
     );
@@ -778,6 +874,7 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     let tree_w = 320;
     let _ = MoveWindow(app.tree, 0, top, tree_w, body_h, true);
     let _ = MoveWindow(app.list, tree_w, top, rc.right - tree_w, body_h, true);
+    let _ = MoveWindow(app.treemap, tree_w, top, rc.right - tree_w, body_h, true);
 }
 
 unsafe fn start_scan(hwnd: HWND, app: &mut AppState, path: String, use_mft: bool) {
@@ -791,6 +888,11 @@ unsafe fn start_scan(hwnd: HWND, app: &mut AppState, path: String, use_mft: bool
     app.item_by_node.clear();
     app.populated.clear();
     app.selected_node = 0;
+    // Entries point into the tree that's about to drop — clear before it does.
+    app.treemap_entries.clear();
+    app.treemap_selected = -1;
+    app.treemap_hover = -1;
+    let _ = InvalidateRect(app.treemap, None, true);
     set_status(
         app.status,
         &format!(
@@ -915,11 +1017,12 @@ unsafe fn on_scan_done(app: &mut AppState) {
             LPARAM(hti),
         );
     }
-    // The tree-selection above repopulates the listview for the FolderTree view.
-    // File-based views ignore tree selection; populate the global ranking directly.
-    // TempFiles is independent of drive scans entirely.
+    // The tree-selection above repopulates the listview (FolderTree) or the
+    // treemap canvas (Treemap) via on_tree_select. File-based views ignore
+    // tree selection; populate the global ranking directly. TempFiles is
+    // independent of drive scans entirely.
     match app.view_mode {
-        ViewMode::FolderTree | ViewMode::TempFiles => {}
+        ViewMode::FolderTree | ViewMode::TempFiles | ViewMode::Treemap => {}
         ViewMode::TopFiles => populate_list_top_files(app),
         ViewMode::OldestFiles => populate_list_oldest_files(app),
     }
@@ -997,8 +1100,12 @@ unsafe fn on_tree_select(app: &mut AppState) {
         return;
     }
     app.selected_node = lparam;
-    let node: &FolderNode = &*(lparam as *const FolderNode);
-    populate_list(app, node);
+    if app.view_mode == ViewMode::Treemap {
+        rebuild_treemap(app);
+    } else {
+        let node: &FolderNode = &*(lparam as *const FolderNode);
+        populate_list(app, node);
+    }
 }
 
 unsafe fn populate_list(app: &AppState, node: &FolderNode) {
@@ -1008,6 +1115,9 @@ unsafe fn populate_list(app: &AppState, node: &FolderNode) {
             // File-based and temp views show global rankings independent of the
             // tree selection; repopulating on tree-select would be wasteful and
             // would clobber the temp view entirely.
+        }
+        ViewMode::Treemap => {
+            // Handled in on_tree_select via rebuild_treemap (needs &mut).
         }
     }
 }
@@ -1149,6 +1259,18 @@ unsafe fn on_temp_scan_done(app: &mut AppState) {
 }
 
 unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState) {
+    if app.view_mode == ViewMode::Treemap {
+        if let Some(path) = treemap_selected_path(app) {
+            recycle(&path);
+            if let Some((scan_path, use_mft)) = app.last_scan.clone() {
+                if !app.scanning {
+                    start_scan(hwnd, app, scan_path, use_mft);
+                }
+            }
+        }
+        return;
+    }
+
     if app.view_mode == ViewMode::TempFiles {
         let indices = selected_indices(app.list);
         if indices.is_empty() {
@@ -1193,11 +1315,7 @@ where
     let root: &FolderNode = &*root_ptr;
     let hits = query(root);
     for (i, h) in hits.iter().enumerate() {
-        let full_path = if h.folder.full_path.ends_with('\\') {
-            format!("{}{}", h.folder.full_path, h.file.name)
-        } else {
-            format!("{}\\{}", h.folder.full_path, h.file.name)
-        };
+        let full_path = join_path(&h.folder.full_path, &h.file.name);
         insert_row_with_param(
             app.list,
             i as i32,
@@ -1264,7 +1382,16 @@ unsafe fn apply_view_mode(hwnd: HWND, app: &mut AppState, mode: ViewMode) {
                 populate_list_temp(app);
             }
         }
+        ViewMode::Treemap => {
+            // No listview columns — the treemap canvas replaces the listview.
+            rebuild_treemap(app);
+        }
     }
+
+    // The treemap canvas and the listview swap places depending on the view.
+    let treemap_mode = mode == ViewMode::Treemap;
+    let _ = ShowWindow(app.list, if treemap_mode { SW_HIDE } else { SW_SHOW });
+    let _ = ShowWindow(app.treemap, if treemap_mode { SW_SHOW } else { SW_HIDE });
 
     if !app.menu.is_invalid() {
         let id = match mode {
@@ -1272,15 +1399,407 @@ unsafe fn apply_view_mode(hwnd: HWND, app: &mut AppState, mode: ViewMode) {
             ViewMode::TopFiles => ID_MENU_VIEW_TOPFILES,
             ViewMode::OldestFiles => ID_MENU_VIEW_OLDEST,
             ViewMode::TempFiles => ID_MENU_VIEW_TEMP,
+            ViewMode::Treemap => ID_MENU_VIEW_TREEMAP,
         } as u32;
         let _ = CheckMenuRadioItem(
             app.menu,
             ID_MENU_VIEW_TREE as u32,
-            ID_MENU_VIEW_TEMP as u32,
+            ID_MENU_VIEW_TREEMAP as u32,
             id,
             MF_BYCOMMAND.0,
         );
     }
+}
+
+// ---- Treemap view ----
+
+// Recomputes the tile layout for the current tree selection (or the scan root)
+// and repaints. Cheap enough to run on tree-select and resize: pure math over
+// the already-scanned tree, pruned at TREEMAP_MIN_PX.
+unsafe fn rebuild_treemap(app: &mut AppState) {
+    app.treemap_entries.clear();
+    app.treemap_selected = -1;
+    app.treemap_hover = -1;
+    let root_ptr: *const FolderNode = if app.selected_node != 0 {
+        app.selected_node as *const FolderNode
+    } else {
+        match app.root_node.as_deref() {
+            Some(r) => r,
+            None => {
+                let _ = InvalidateRect(app.treemap, None, true);
+                return;
+            }
+        }
+    };
+    let mut rc = RECT::default();
+    let _ = GetClientRect(app.treemap, &mut rc);
+    let bounds = Rectf {
+        x: rc.left as f64,
+        y: rc.top as f64,
+        w: (rc.right - rc.left) as f64,
+        h: (rc.bottom - rc.top) as f64,
+    };
+    build_treemap_level(&mut app.treemap_entries, &*root_ptr, bounds, 0, None);
+    let _ = InvalidateRect(app.treemap, None, true);
+}
+
+// Emits tiles for one folder's contents (subfolders + direct files) into
+// `bounds`, then recurses into each subfolder tile. `hue` is None only at the
+// top level, where each item founds its own color family.
+fn build_treemap_level(
+    entries: &mut Vec<TreemapEntry>,
+    folder: &FolderNode,
+    bounds: Rectf,
+    depth: u32,
+    hue: Option<usize>,
+) {
+    if depth > TREEMAP_MAX_DEPTH || bounds.w < TREEMAP_MIN_PX || bounds.h < TREEMAP_MIN_PX {
+        return;
+    }
+    enum Item<'a> {
+        Folder(&'a FolderNode),
+        File(&'a FileEntry),
+    }
+    let mut items: Vec<(i64, Item)> = folder
+        .children
+        .iter()
+        .map(|c| (c.size, Item::Folder(c)))
+        .chain(folder.files.iter().map(|f| (f.size, Item::File(f))))
+        .collect();
+    // Descending size gives the squarified layout its best aspect ratios.
+    items.sort_by_key(|(s, _)| std::cmp::Reverse(*s));
+    let sizes: Vec<i64> = items.iter().map(|(s, _)| *s).collect();
+    let rects = treemap::layout(&sizes, bounds);
+    for (i, ((_, item), r)) in items.iter().zip(&rects).enumerate() {
+        if r.w < TREEMAP_MIN_PX || r.h < TREEMAP_MIN_PX {
+            continue;
+        }
+        let hue_idx = hue.unwrap_or(i);
+        let rect = RECT {
+            left: r.x.round() as i32,
+            top: r.y.round() as i32,
+            right: (r.x + r.w).round() as i32,
+            bottom: (r.y + r.h).round() as i32,
+        };
+        match item {
+            Item::Folder(c) => {
+                entries.push(TreemapEntry {
+                    rect,
+                    folder: *c as *const _,
+                    file: std::ptr::null(),
+                    depth,
+                    hue_idx,
+                });
+                // Inset children by 1px so the folder's own border stays visible.
+                let inner = Rectf {
+                    x: r.x + 1.0,
+                    y: r.y + 1.0,
+                    w: r.w - 2.0,
+                    h: r.h - 2.0,
+                };
+                build_treemap_level(entries, c, inner, depth + 1, Some(hue_idx));
+            }
+            Item::File(f) => {
+                entries.push(TreemapEntry {
+                    rect,
+                    folder: folder as *const _,
+                    file: *f as *const _,
+                    depth,
+                    hue_idx,
+                });
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn treemap_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1), // fully painted in WM_PAINT (flicker-free)
+        WM_PAINT => {
+            paint_treemap(hwnd, app);
+            LRESULT(0)
+        }
+        WM_SIZE => {
+            if app.view_mode == ViewMode::Treemap {
+                rebuild_treemap(app);
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            let (x, y) = lparam_xy(lparam);
+            let hit = treemap_hit_test(app, x, y);
+            if hit != app.treemap_hover {
+                app.treemap_hover = hit;
+                if hit >= 0 {
+                    let text = treemap_entry_status(&app.treemap_entries[hit as usize]);
+                    set_status(app.status, &text);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let (x, y) = lparam_xy(lparam);
+            let hit = treemap_hit_test(app, x, y);
+            if hit != app.treemap_selected {
+                app.treemap_selected = hit;
+                let _ = InvalidateRect(hwnd, None, false);
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONDBLCLK => {
+            let (x, y) = lparam_xy(lparam);
+            let hit = treemap_hit_test(app, x, y);
+            if hit >= 0 {
+                let e = &app.treemap_entries[hit as usize];
+                let (folder, file) = (e.folder, e.file);
+                if file.is_null() {
+                    select_tree_node(app, folder);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_RBUTTONDOWN => {
+            let (x, y) = lparam_xy(lparam);
+            let hit = treemap_hit_test(app, x, y);
+            app.treemap_selected = hit;
+            let _ = InvalidateRect(hwnd, None, false);
+            if hit >= 0 {
+                // Route the shared context menu through the main window so its
+                // WM_COMMAND handlers fire there.
+                show_context_menu(main_window_of(app), app);
+            }
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// The treemap canvas is a direct child of the main window; commands from the
+// shared context menu must go to the parent's WndProc.
+unsafe fn main_window_of(app: &AppState) -> HWND {
+    windows::Win32::UI::WindowsAndMessaging::GetParent(app.treemap).unwrap_or_default()
+}
+
+fn lparam_xy(lparam: LPARAM) -> (i32, i32) {
+    let x = (lparam.0 & 0xFFFF) as u16 as i16 as i32;
+    let y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
+    (x, y)
+}
+
+// Entries are stored parents-before-children, so scanning backwards returns
+// the deepest tile under the cursor (siblings never overlap).
+fn treemap_hit_test(app: &AppState, x: i32, y: i32) -> i32 {
+    for (i, e) in app.treemap_entries.iter().enumerate().rev() {
+        if x >= e.rect.left && x < e.rect.right && y >= e.rect.top && y < e.rect.bottom {
+            return i as i32;
+        }
+    }
+    -1
+}
+
+unsafe fn treemap_selected_ptrs(app: &AppState) -> Option<(*const FolderNode, *const FileEntry)> {
+    if app.treemap_selected < 0 {
+        return None;
+    }
+    app.treemap_entries
+        .get(app.treemap_selected as usize)
+        .map(|e| (e.folder, e.file))
+}
+
+unsafe fn treemap_selected_path(app: &AppState) -> Option<String> {
+    treemap_selected_ptrs(app).map(|(folder, file)| {
+        if file.is_null() {
+            (*folder).full_path.clone()
+        } else {
+            join_path(&(*folder).full_path, &(*file).name)
+        }
+    })
+}
+
+unsafe fn treemap_entry_status(e: &TreemapEntry) -> String {
+    let folder = &*e.folder;
+    if e.file.is_null() {
+        format!(
+            "{} — {} ({} files)",
+            folder.full_path,
+            format_bytes(folder.size),
+            format_count(folder.file_count),
+        )
+    } else {
+        let f = &*e.file;
+        format!(
+            "{} — {}",
+            join_path(&folder.full_path, &f.name),
+            format_bytes(f.size),
+        )
+    }
+}
+
+// Expands/populates the tree down to `target` (tree items are lazily created,
+// so ancestors may not have items yet), then selects it — which triggers
+// on_tree_select and re-roots the treemap.
+unsafe fn select_tree_node(app: &mut AppState, target: *const FolderNode) {
+    let root_ptr: *const FolderNode = match app.root_node.as_deref() {
+        Some(r) => r,
+        None => return,
+    };
+    let mut path: Vec<*const FolderNode> = Vec::new();
+    if !find_node_path(&*root_ptr, target, &mut path) {
+        return;
+    }
+    for win in path.windows(2) {
+        let (parent, child) = (win[0], win[1]);
+        if !app.item_by_node.contains_key(&(child as isize)) {
+            if let Some(&phti) = app.item_by_node.get(&(parent as isize)) {
+                populate_children(app, phti, &*parent);
+            }
+        }
+    }
+    if let Some(&hti) = app.item_by_node.get(&(target as isize)) {
+        SendMessageW(
+            app.tree,
+            TVM_SELECTITEM,
+            WPARAM(TVGN_CARET as usize),
+            LPARAM(hti),
+        );
+    }
+}
+
+// DFS for the pointer-path root..=target. Recursion depth = folder nesting
+// depth, which Windows caps well below any stack concern.
+fn find_node_path(
+    cur: &FolderNode,
+    target: *const FolderNode,
+    path: &mut Vec<*const FolderNode>,
+) -> bool {
+    path.push(cur as *const _);
+    if std::ptr::eq(cur, target) {
+        return true;
+    }
+    for c in &cur.children {
+        if find_node_path(c, target, path) {
+            return true;
+        }
+    }
+    path.pop();
+    false
+}
+
+// ---- Treemap painting ----
+
+const PALETTE_HUES: [f64; 12] = [
+    210.0, 30.0, 130.0, 275.0, 55.0, 0.0, 180.0, 315.0, 95.0, 240.0, 160.0, 340.0,
+];
+
+fn tile_color(hue_idx: usize, depth: u32, is_file: bool, is_dark: bool) -> u32 {
+    let hue = PALETTE_HUES[hue_idx % PALETTE_HUES.len()];
+    let sat = if is_file { 0.18 } else { 0.50 };
+    let dl = 0.035 * depth.min(8) as f64;
+    // Deeper tiles drift toward the theme's foreground so nesting reads.
+    let l = if is_dark {
+        (0.28 + dl).min(0.55)
+    } else {
+        (0.62 - dl).max(0.35)
+    };
+    hsl_to_colorref(hue, sat, l)
+}
+
+// COLORREF is 0x00BBGGRR.
+fn hsl_to_colorref(h: f64, s: f64, l: f64) -> u32 {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let hp = h.rem_euclid(360.0) / 60.0;
+    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match hp as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    let to8 = |v: f64| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u32;
+    (to8(b1) << 16) | (to8(g1) << 8) | to8(r1)
+}
+
+unsafe fn paint_treemap(hwnd: HWND, app: &AppState) {
+    let mut ps = PAINTSTRUCT::default();
+    let hdc = BeginPaint(hwnd, &mut ps);
+    let mut rc = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rc);
+    let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
+    if w <= 0 || h <= 0 {
+        let _ = EndPaint(hwnd, &ps);
+        return;
+    }
+
+    // Off-screen buffer: tiles overdraw their parents, so painting direct
+    // would flicker badly.
+    let mem = CreateCompatibleDC(hdc);
+    let bmp = CreateCompatibleBitmap(hdc, w, h);
+    let old = SelectObject(mem, bmp);
+
+    let bg = if app.is_dark {
+        0x0020_2020
+    } else {
+        0x00FF_FFFF
+    };
+    let bg_brush = CreateSolidBrush(COLORREF(bg));
+    FillRect(mem, &rc, bg_brush);
+    let _ = DeleteObject(bg_brush);
+
+    let border = if app.is_dark {
+        0x0010_1010
+    } else {
+        0x00D0_D0D0
+    };
+    let border_brush = CreateSolidBrush(COLORREF(border));
+    // Few distinct colors (hue × depth × kind), many tiles — cache brushes.
+    let mut brushes: HashMap<u32, windows::Win32::Graphics::Gdi::HBRUSH> = HashMap::new();
+    for e in &app.treemap_entries {
+        let color = tile_color(e.hue_idx, e.depth, !e.file.is_null(), app.is_dark);
+        let brush = *brushes
+            .entry(color)
+            .or_insert_with(|| CreateSolidBrush(COLORREF(color)));
+        FillRect(mem, &e.rect, brush);
+        FrameRect(mem, &e.rect, border_brush);
+    }
+    for (_, b) in brushes {
+        let _ = DeleteObject(b);
+    }
+    let _ = DeleteObject(border_brush);
+
+    if app.treemap_selected >= 0 {
+        if let Some(e) = app.treemap_entries.get(app.treemap_selected as usize) {
+            // 2px accent frame (#3399FF) so the selection reads on any tile color.
+            let sel = CreateSolidBrush(COLORREF(0x00FF_9933));
+            FrameRect(mem, &e.rect, sel);
+            let inner = RECT {
+                left: e.rect.left + 1,
+                top: e.rect.top + 1,
+                right: (e.rect.right - 1).max(e.rect.left + 1),
+                bottom: (e.rect.bottom - 1).max(e.rect.top + 1),
+            };
+            FrameRect(mem, &inner, sel);
+            let _ = DeleteObject(sel);
+        }
+    }
+
+    let _ = BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, old);
+    let _ = DeleteObject(bmp);
+    let _ = DeleteDC(mem);
+    let _ = EndPaint(hwnd, &ps);
 }
 
 fn format_filetime(raw: i64) -> String {
@@ -1514,6 +2033,7 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
     app.theme_mode = mode;
     app.is_dark = is_dark;
     let _ = InvalidateRect(hwnd, None, true);
+    let _ = InvalidateRect(app.treemap, None, true);
 }
 
 // ---- About dialog + admin relaunch ----
@@ -1767,6 +2287,14 @@ unsafe fn set_status(status: HWND, text: &str) {
 }
 
 // ---- Formatting ----
+
+fn join_path(dir: &str, leaf: &str) -> String {
+    if dir.ends_with('\\') {
+        format!("{dir}{leaf}")
+    } else {
+        format!("{dir}\\{leaf}")
+    }
+}
 
 fn format_bytes(n: i64) -> String {
     if n < 1024 {
