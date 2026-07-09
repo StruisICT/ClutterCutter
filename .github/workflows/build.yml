@@ -30,6 +30,32 @@ permissions:
   actions: read   # SignPath downloads the build artifact via the Actions API
 
 jobs:
+  # Quality gates for the Rust port. Runs in parallel with the build so a
+  # formatting/lint/test regression fails fast and visibly.
+  rust-checks:
+    name: Rust checks (fmt, clippy, test)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: test
+        run: cargo test
+        # Note: deliberately not --locked. release-please bumps rust/Cargo.toml via
+        # extra-files but not Cargo.lock, so --locked would fail the release PR.
+        # The lock self-heals on build; it's committed for reproducibility, not gated.
+
   build:
     name: Build (Windows)
     runs-on: windows-latest

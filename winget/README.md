@@ -77,6 +77,11 @@ three 1.12.0 manifest files under `winget/manifests/.../<version>/`, and opens a
   may not auto-start — run it manually: **Actions → winget manifest → Run
   workflow**, enter the version (e.g. `0.4.0`).
 - Or generate locally: `pwsh ./scripts/Update-WingetManifest.ps1 -Version 0.4.0`.
+- The workflow always generates the manifest and **pushes a `winget/<version>`
+  branch**, then tries to open the PR. Opening the PR needs the org setting
+  **Settings → Actions → General → “Allow GitHub Actions to create and approve
+  pull requests”** (org-owner toggle). Until that's on, the run stays green and
+  prints a ready-to-click compare link — just open the PR from the pushed branch.
 
 Then, for the actual winget-pkgs submission:
 

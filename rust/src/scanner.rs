@@ -11,11 +11,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, GetLastError, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::{GetLastError, ERROR_ACCESS_DENIED, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::{
-    FindClose, FindFirstFileExW, FindNextFileW, FILE_ATTRIBUTE_DIRECTORY,
-    FILE_ATTRIBUTE_REPARSE_POINT, FIND_FIRST_EX_LARGE_FETCH, FindExInfoBasic,
-    FindExSearchNameMatch, WIN32_FIND_DATAW,
+    FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FIND_FIRST_EX_LARGE_FETCH,
+    WIN32_FIND_DATAW,
 };
 
 pub type ProgressFn = Box<dyn Fn(&ScanProgress) + Send + Sync>;
@@ -31,6 +31,12 @@ pub struct Scanner {
     files_scanned: AtomicI64,
     last_report_ms: AtomicI64,
     start: Instant,
+}
+
+impl Default for Scanner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Scanner {
@@ -86,15 +92,17 @@ impl Scanner {
             return FolderNode::default();
         }
 
-        let mut node = FolderNode::default();
-        node.full_path = path.to_string();
-        node.name = if is_root {
-            path.to_string()
-        } else {
-            std::path::Path::new(path)
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default()
+        let mut node = FolderNode {
+            full_path: path.to_string(),
+            name: if is_root {
+                path.to_string()
+            } else {
+                std::path::Path::new(path)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            },
+            ..Default::default()
         };
 
         let find_path = if path.ends_with('\\') {
@@ -270,8 +278,8 @@ fn to_long_path(p: &str) -> String {
     if p.starts_with(r"\\?\") {
         return p.to_string();
     }
-    if p.starts_with(r"\\") {
-        return format!(r"\\?\UNC\{}", &p[2..]);
+    if let Some(rest) = p.strip_prefix(r"\\") {
+        return format!(r"\\?\UNC\{rest}");
     }
     format!(r"\\?\{p}")
 }

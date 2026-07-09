@@ -128,7 +128,7 @@ fn main() {
     }
     if !printed_special {
         let mut kids: Vec<&types::FolderNode> = root.children.iter().collect();
-        kids.sort_by(|a, b| b.size.cmp(&a.size));
+        kids.sort_by_key(|k| std::cmp::Reverse(k.size));
         for k in kids.iter().take(20) {
             println!("  {:>10}  {}", fmt_bytes(k.size), k.name);
         }
