@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/StruisICT/ClutterCutter/compare/v0.4.0...v0.5.0) (2026-07-10)
+
+
+### Features
+
+* detachable side-panel layout, scan-all-drives, temp recycle-all, WCAG AA ([#26](https://github.com/StruisICT/ClutterCutter/issues/26)) ([ce3e450](https://github.com/StruisICT/ClutterCutter/commit/ce3e45073918d78c27bc3194c8c9941217b498f7))
+* treemap view in the Rust port ([#25](https://github.com/StruisICT/ClutterCutter/issues/25)) ([84f1b31](https://github.com/StruisICT/ClutterCutter/commit/84f1b31ff6b87d277b298293b42e9ad3befac32e))
+
+
+### Bug Fixes
+
+* make dark mode cover buttons, headers, menu bar, and status bar ([#27](https://github.com/StruisICT/ClutterCutter/issues/27)) ([96206e6](https://github.com/StruisICT/ClutterCutter/commit/96206e6fcb6c716a4916e777b9fade1e5bc52576))
+
 ## [0.4.0](https://github.com/StruisICT/ClutterCutter/compare/v0.3.0...v0.4.0) (2026-06-09)
 
 
