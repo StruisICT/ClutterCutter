@@ -140,6 +140,17 @@ behavior and match it. If you intentionally diverge, note it here.
   themes the buttons (`DarkMode_Explorer`) and paints window/panel backgrounds
   via `WM_ERASEBKGND` (class brushes are fixed at registration). Keep these
   invariants when touching theming or the treemap painter.
+- **Dark-mode plumbing** (`rust/app.manifest` + `gui.rs`): the embedded
+  manifest declares comctl32 v6 + the Win10 supportedOS GUID — without it the
+  process gets classic comctl32 v5.82 and `SetWindowTheme`/`DarkMode_*` are
+  inert (this was why buttons/headers stayed white). Full dark rendering then
+  needs the undocumented uxtheme ordinals (104/133/135/136 — guarded, no-op
+  if missing), `ItemsView` on the listview header children, an owner-drawn
+  menu bar via the `WM_UAHDRAWMENU`/`WM_UAHDRAWMENUITEM` messages (light mode
+  falls through to the stock bar), and a custom status strip
+  (`ClutterCutterStatus` class) replacing `msctls_statusbar32`, which has no
+  dark theme part. Theme switches end with `SWP_FRAMECHANGED` + `RedrawWindow`
+  so the non-client area repaints.
 
 ## Versioning (SemVer)
 

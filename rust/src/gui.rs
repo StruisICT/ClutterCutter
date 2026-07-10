@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use windows::core::{w, PCWSTR, PWSTR};
+use windows::core::{w, PCSTR, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     BOOL, COLORREF, FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
 };
@@ -31,9 +31,10 @@ use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_D
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC,
     CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect,
-    GetSysColorBrush, InvalidateRect, SelectObject, SetBkMode, SetTextColor, UpdateWindow,
-    COLOR_BTNFACE, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, PAINTSTRUCT,
-    SRCCOPY, TRANSPARENT,
+    GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow, ReleaseDC,
+    SelectObject, SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE, DT_CENTER, DT_END_ELLIPSIS,
+    DT_HIDEPREFIX, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, PAINTSTRUCT, RDW_ALLCHILDREN,
+    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -41,7 +42,7 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Registry::{
@@ -54,14 +55,14 @@ use windows::Win32::UI::Controls::{
     InitCommonControlsEx, SetWindowTheme, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
     ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT,
     LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS,
-    LVM_DELETECOLUMN, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
-    LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR,
-    LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES,
-    LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NM_DBLCLK, NM_RCLICK, SBARS_SIZEGRIP,
-    SB_SETTEXTW, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_PARAM, TVIF_TEXT,
-    TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW,
-    TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
-    TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    LVM_DELETECOLUMN, LVM_GETHEADER, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
+    LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMTEXTW,
+    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
+    LVS_EX_GRIDLINES, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NM_DBLCLK, NM_RCLICK,
+    TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
+    TVM_DELETEITEM, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR,
+    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
+    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus, SetFocus};
 use windows::Win32::UI::Shell::{
@@ -71,18 +72,20 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
     CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
-    GetCursorPos, GetMessageW, GetWindowLongPtrW, IsDialogMessageW, LoadCursorW, LoadIconW,
-    MessageBoxW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-    SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowTextW, ShowWindow,
-    TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL, BS_PUSHBUTTON, CREATESTRUCTW,
-    CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, DLGC_WANTARROWS, FVIRTKEY, GWLP_USERDATA,
-    HMENU, IDC_ARROW, IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MF_BYCOMMAND, MF_POPUP,
-    MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
-    WM_ERASEBKGND, WM_GETDLGCODE, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_MOUSEMOVE, WM_NCCREATE, WM_NOTIFY, WM_PAINT, WM_RBUTTONDOWN, WM_SETFOCUS, WM_SIZE,
-    WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW,
-    WS_TABSTOP, WS_VISIBLE,
+    GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetWindowLongPtrW, GetWindowRect,
+    GetWindowTextW, IsDialogMessageW, LoadCursorW, LoadIconW, MessageBoxW, MoveWindow,
+    PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow, SetMenu,
+    SetParent, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu,
+    TranslateAcceleratorW, TranslateMessage, ACCEL, BS_PUSHBUTTON, CREATESTRUCTW, CS_DBLCLKS,
+    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, DLGC_WANTARROWS, FVIRTKEY, GWLP_USERDATA, HMENU,
+    IDC_ARROW, IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MENUBARINFO, MENUITEMINFOW,
+    MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
+    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_GETDLGCODE, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT,
+    WM_NOTIFY, WM_PAINT, WM_RBUTTONDOWN, WM_SETFOCUS, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD,
+    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -101,6 +104,9 @@ const ID_STATUS: u16 = 400;
 // Side panel geometry
 const PANEL_W: i32 = 420;
 const PANEL_HEADER_H: i32 = 30;
+
+// Custom status strip height
+const STATUS_H: i32 = 24;
 
 // Accelerator + context-menu IDs share the WM_COMMAND space.
 const ID_ACC_REFRESH: u16 = 3001; // F5
@@ -475,6 +481,23 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_ERASEBKGND => erase_theme_bg(app, hwnd, HDC(wparam.0 as _)),
+        // Dark menu bar: owner-draw via the undocumented UAH messages; light
+        // mode falls through to the stock bar.
+        m if m == WM_UAHDRAWMENU && app.is_dark => {
+            uah_draw_menu_bar_bg(hwnd, &*(lparam.0 as *const UahMenu));
+            LRESULT(1)
+        }
+        m if m == WM_UAHDRAWMENUITEM && app.is_dark => {
+            uah_draw_menu_item(&*(lparam.0 as *const UahDrawMenuItem));
+            LRESULT(1)
+        }
+        WM_NCPAINT | WM_NCACTIVATE => {
+            let r = DefWindowProcW(hwnd, msg, wparam, lparam);
+            if app.is_dark {
+                uah_draw_menu_bottom_line(hwnd);
+            }
+            r
+        }
         WM_COMMAND => {
             on_command(hwnd, app, (wparam.0 & 0xFFFF) as u16);
             LRESULT(0)
@@ -1093,24 +1116,92 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
+    // Custom status strip instead of msctls_statusbar32: the system status
+    // bar has no dark theme part, so it stayed white in dark mode. The text
+    // lives in the window text (WM_SETTEXT via set_status) and is painted
+    // theme-aware in status_proc.
+    let status_class = w!("ClutterCutterStatus");
+    let status_wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW,
+        lpfnWndProc: Some(status_proc),
+        hInstance: hinstance.into(),
+        hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
+        hbrBackground: HBRUSH::default(), // fully painted in WM_PAINT
+        lpszClassName: status_class,
+        ..Default::default()
+    };
+    RegisterClassExW(&status_wc);
     app.status = CreateWindowExW(
         WINDOW_EX_STYLE(0),
-        w!("msctls_statusbar32"),
+        status_class,
         PCWSTR(init_w.as_ptr()),
-        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(SBARS_SIZEGRIP),
+        WS_CHILD | WS_VISIBLE,
         0,
         0,
         0,
-        0,
+        STATUS_H,
         hwnd,
         HMENU(ID_STATUS as isize as _),
         hinstance,
         None,
     )
     .expect("status bar");
+    SetWindowLongPtrW(app.status, GWLP_USERDATA, app_lp);
 
     // Apply initial theme.
     apply_theme(hwnd, app, ThemeMode::Auto);
+}
+
+unsafe extern "system" fn status_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &*app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let (bg, fg): (u32, u32) = if app.is_dark {
+                (0x002B_2B2B, 0x00E0_E0E0)
+            } else {
+                (0x00F0_F0F0, 0x0000_0000)
+            };
+            let brush = CreateSolidBrush(COLORREF(bg));
+            FillRect(hdc, &rc, brush);
+            let _ = DeleteObject(brush);
+            let mut buf = [0u16; 1024];
+            let len = GetWindowTextW(hwnd, &mut buf) as usize;
+            if len > 0 {
+                SetBkMode(hdc, TRANSPARENT);
+                SetTextColor(hdc, COLORREF(fg));
+                let mut text_rc = RECT {
+                    left: 8,
+                    top: 0,
+                    right: rc.right - 8,
+                    bottom: rc.bottom,
+                };
+                DrawTextW(
+                    hdc,
+                    &mut buf[..len],
+                    &mut text_rc,
+                    DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+                );
+            }
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
 }
 
 unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
@@ -1224,16 +1315,19 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
 }
 
 unsafe fn layout(hwnd: HWND, app: &mut AppState) {
-    SendMessageW(app.status, WM_SIZE, WPARAM(0), LPARAM(0));
-
     let mut rc = RECT::default();
     let _ = GetClientRect(hwnd, &mut rc);
-    let mut status_rc = RECT::default();
-    let _ = GetClientRect(app.status, &mut status_rc);
-    let status_h = status_rc.bottom - status_rc.top;
+    let _ = MoveWindow(
+        app.status,
+        0,
+        rc.bottom - STATUS_H,
+        rc.right,
+        STATUS_H,
+        true,
+    );
 
     let top = 80;
-    let body_h = (rc.bottom - top - status_h).max(0);
+    let body_h = (rc.bottom - top - STATUS_H).max(0);
     let tree_w = 320;
     let _ = MoveWindow(app.tree, 0, top, tree_w, body_h, true);
     // The side panel takes a fixed strip on the right while attached; the
@@ -2790,9 +2884,34 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
     } else {
         "Explorer\0".encode_utf16().collect()
     };
+    // Process-wide dark mode (undocumented uxtheme, guarded): without this,
+    // DarkMode_* window themes don't actually render dark and popup menus
+    // stay white. Must run before the SetWindowTheme calls below, and every
+    // themed control additionally needs the per-window allow call.
+    set_preferred_app_mode(is_dark);
+    for w in [hwnd, app.float_win, app.panel, app.treemap, app.status] {
+        if !w.is_invalid() {
+            allow_dark_mode_for_window(w, is_dark);
+        }
+    }
+
+    allow_dark_mode_for_window(app.list, is_dark);
+    allow_dark_mode_for_window(app.tree, is_dark);
+    allow_dark_mode_for_window(app.side_list, is_dark);
     let _ = SetWindowTheme(app.list, PCWSTR(theme_w.as_ptr()), PCWSTR::null());
     let _ = SetWindowTheme(app.tree, PCWSTR(theme_w.as_ptr()), PCWSTR::null());
     let _ = SetWindowTheme(app.side_list, PCWSTR(theme_w.as_ptr()), PCWSTR::null());
+    // Listview column headers have their own theme part ("ItemsView", which
+    // follows the allow-dark state); without both they stay white in dark mode.
+    let header_theme_w: Vec<u16> = "ItemsView\0".encode_utf16().collect();
+    for list in [app.list, app.side_list] {
+        let header = SendMessageW(list, LVM_GETHEADER, WPARAM(0), LPARAM(0));
+        if header.0 != 0 {
+            let header = HWND(header.0 as _);
+            allow_dark_mode_for_window(header, is_dark);
+            let _ = SetWindowTheme(header, PCWSTR(header_theme_w.as_ptr()), PCWSTR::null());
+        }
+    }
     // Dark push buttons (Win10 1809+); "Explorer" restores the standard look.
     let buttons: Vec<HWND> = app
         .drive_buttons
@@ -2806,6 +2925,7 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
         ])
         .collect();
     for b in buttons {
+        allow_dark_mode_for_window(b, is_dark);
         let _ = SetWindowTheme(b, PCWSTR(theme_w.as_ptr()), PCWSTR::null());
     }
     if !app.float_win.is_invalid() {
@@ -2864,9 +2984,234 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
 
     app.theme_mode = mode;
     app.is_dark = is_dark;
-    let _ = InvalidateRect(hwnd, None, true);
+    // Force a full frame + children repaint: the title/menu bar live in the
+    // non-client area and don't pick up theme changes from a client-area
+    // invalidate alone.
+    let _ = SetWindowPos(
+        hwnd,
+        HWND::default(),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+    );
+    let _ = DrawMenuBar(hwnd);
+    let _ = RedrawWindow(
+        hwnd,
+        None,
+        None,
+        RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
+    );
+    if !app.float_win.is_invalid() {
+        let _ = RedrawWindow(
+            app.float_win,
+            None,
+            None,
+            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
+        );
+    }
     let _ = InvalidateRect(app.treemap, None, true);
     let _ = InvalidateRect(app.panel, None, true);
+    let _ = InvalidateRect(app.status, None, true);
+}
+
+// ---- Undocumented dark-mode plumbing ----
+//
+// Windows exposes no public API to render Win32 common controls dark; the
+// DarkMode_* window themes only take effect after the app opts in through
+// unexported uxtheme entry points (looked up by ordinal — the technique
+// Notepad++, Windows Terminal-era tools, etc. use). Everything here degrades
+// to a silent no-op if an ordinal is missing, leaving light-on-dark controls
+// that still pass WCAG contrast.
+//
+//   ordinal 104: RefreshImmersiveColorPolicyState()
+//   ordinal 133: AllowDarkModeForWindow(hwnd, allow) — required per control
+//                before DarkMode_*/ItemsView themes actually render dark
+//   ordinal 135: SetPreferredAppMode(mode) — 1903+; 0=Default 1=AllowDark
+//                2=ForceDark 3=ForceLight
+//   ordinal 136: FlushMenuThemes() — re-themes popup menus
+
+unsafe fn uxtheme_ordinal(ordinal: u16) -> Option<unsafe extern "system" fn() -> isize> {
+    let lib = LoadLibraryW(w!("uxtheme.dll")).ok()?;
+    GetProcAddress(lib, PCSTR(ordinal as usize as *const u8))
+}
+
+unsafe fn allow_dark_mode_for_window(hwnd: HWND, allow: bool) {
+    if let Some(f) = uxtheme_ordinal(133) {
+        let allow_fn: unsafe extern "system" fn(HWND, BOOL) -> BOOL = std::mem::transmute(f);
+        let _ = allow_fn(hwnd, BOOL(allow as i32));
+    }
+}
+
+// ---- Dark menu bar (WM_UAH* owner-draw) ----
+//
+// FlushMenuThemes darkens popup menus but never the menu *bar*. The bar can
+// be painted via the undocumented WM_UAHDRAWMENU / WM_UAHDRAWMENUITEM
+// messages Windows sends when a window is UAH-subclassed — which it is by
+// default for any themed top-level window. This is the same technique
+// Notepad++ uses. When the theme is light we pass everything to
+// DefWindowProc, giving the stock menu bar.
+
+const WM_UAHDRAWMENU: u32 = 0x0091;
+const WM_UAHDRAWMENUITEM: u32 = 0x0092;
+
+// Raw ODS_* bits (DRAWITEMSTRUCT.itemState).
+const ODS_RAW_SELECTED: u32 = 0x0001;
+const ODS_RAW_GRAYED: u32 = 0x0002;
+const ODS_RAW_HOTLIGHT: u32 = 0x0040;
+const ODS_RAW_NOACCEL: u32 = 0x0100;
+
+const MENUBAR_DARK_BG: u32 = 0x0020_2020;
+const MENUBAR_DARK_HOT: u32 = 0x003E_3E3E;
+const MENUBAR_DARK_FG: u32 = 0x00E0_E0E0;
+const MENUBAR_DARK_GRAY: u32 = 0x0080_8080;
+
+#[repr(C)]
+struct UahMenu {
+    hmenu: HMENU,
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    dw_flags: u32,
+}
+
+#[repr(C)]
+struct UahMenuItemMetrics {
+    // Union of bar/popup size pairs; 4 (cx, cy) pairs cover both variants.
+    rgsize: [[u32; 2]; 4],
+}
+
+#[repr(C)]
+struct UahMenuPopupMetrics {
+    rgcx: [u32; 4],
+    bitfield: u32, // fUpdateMaxWidths : 2
+}
+
+#[repr(C)]
+struct UahMenuItem {
+    i_position: i32,
+    umim: UahMenuItemMetrics,
+    umpm: UahMenuPopupMetrics,
+}
+
+#[repr(C)]
+struct UahDrawMenuItem {
+    dis: windows::Win32::UI::Controls::DRAWITEMSTRUCT,
+    um: UahMenu,
+    umi: UahMenuItem,
+}
+
+// Menu bar background (the strip behind the items).
+unsafe fn uah_draw_menu_bar_bg(hwnd: HWND, udm: &UahMenu) {
+    let mut mbi = MENUBARINFO {
+        cbSize: std::mem::size_of::<MENUBARINFO>() as u32,
+        ..Default::default()
+    };
+    if GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mut mbi).is_err() {
+        return;
+    }
+    let mut rc_win = RECT::default();
+    let _ = GetWindowRect(hwnd, &mut rc_win);
+    // rcBar is in screen coords; the UAH DC is a window DC.
+    let rc = RECT {
+        left: mbi.rcBar.left - rc_win.left,
+        top: mbi.rcBar.top - rc_win.top,
+        right: mbi.rcBar.right - rc_win.left,
+        bottom: mbi.rcBar.bottom - rc_win.top,
+    };
+    let brush = CreateSolidBrush(COLORREF(MENUBAR_DARK_BG));
+    FillRect(udm.hdc, &rc, brush);
+    let _ = DeleteObject(brush);
+}
+
+unsafe fn uah_draw_menu_item(pudmi: &UahDrawMenuItem) {
+    // Item caption.
+    let mut buf = [0u16; 256];
+    let mut mii = MENUITEMINFOW {
+        cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
+        fMask: MIIM_STRING,
+        dwTypeData: PWSTR(buf.as_mut_ptr()),
+        cch: (buf.len() - 1) as u32,
+        ..Default::default()
+    };
+    let _ = GetMenuItemInfoW(pudmi.um.hmenu, pudmi.umi.i_position as u32, true, &mut mii);
+    let len = mii.cch as usize;
+
+    let state = pudmi.dis.itemState.0;
+    let bg = if state & (ODS_RAW_HOTLIGHT | ODS_RAW_SELECTED) != 0 {
+        MENUBAR_DARK_HOT
+    } else {
+        MENUBAR_DARK_BG
+    };
+    let fg = if state & ODS_RAW_GRAYED != 0 {
+        MENUBAR_DARK_GRAY
+    } else {
+        MENUBAR_DARK_FG
+    };
+    let brush = CreateSolidBrush(COLORREF(bg));
+    FillRect(pudmi.dis.hDC, &pudmi.dis.rcItem, brush);
+    let _ = DeleteObject(brush);
+    if len == 0 {
+        return;
+    }
+    SetBkMode(pudmi.dis.hDC, TRANSPARENT);
+    SetTextColor(pudmi.dis.hDC, COLORREF(fg));
+    let mut fmt = DT_CENTER | DT_SINGLELINE | DT_VCENTER;
+    if state & ODS_RAW_NOACCEL != 0 {
+        fmt |= DT_HIDEPREFIX;
+    }
+    let mut rc = pudmi.dis.rcItem;
+    DrawTextW(pudmi.dis.hDC, &mut buf[..len], &mut rc, fmt);
+}
+
+// Windows draws a 1px light line between the menu bar and the client area
+// during non-client painting; overpaint it to match the dark bar.
+unsafe fn uah_draw_menu_bottom_line(hwnd: HWND) {
+    let mut mbi = MENUBARINFO {
+        cbSize: std::mem::size_of::<MENUBARINFO>() as u32,
+        ..Default::default()
+    };
+    if GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mut mbi).is_err() {
+        return;
+    }
+    let mut rc_client = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rc_client);
+    let mut pts = [
+        POINT {
+            x: rc_client.left,
+            y: rc_client.top,
+        },
+        POINT {
+            x: rc_client.right,
+            y: rc_client.bottom,
+        },
+    ];
+    MapWindowPoints(hwnd, HWND::default(), &mut pts);
+    let mut rc_win = RECT::default();
+    let _ = GetWindowRect(hwnd, &mut rc_win);
+    let line = RECT {
+        left: pts[0].x - rc_win.left,
+        top: pts[0].y - rc_win.top - 1,
+        right: pts[1].x - rc_win.left,
+        bottom: pts[0].y - rc_win.top,
+    };
+    let hdc = GetWindowDC(hwnd);
+    let brush = CreateSolidBrush(COLORREF(MENUBAR_DARK_BG));
+    FillRect(hdc, &line, brush);
+    let _ = DeleteObject(brush);
+    let _ = ReleaseDC(hwnd, hdc);
+}
+
+unsafe fn set_preferred_app_mode(dark: bool) {
+    if let Some(f) = uxtheme_ordinal(135) {
+        let set_mode: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);
+        set_mode(if dark { 2 } else { 3 }); // ForceDark / ForceLight
+    }
+    if let Some(f) = uxtheme_ordinal(104) {
+        f(); // RefreshImmersiveColorPolicyState
+    }
+    if let Some(f) = uxtheme_ordinal(136) {
+        f(); // FlushMenuThemes
+    }
 }
 
 // ---- About dialog + admin relaunch ----
@@ -3110,13 +3455,9 @@ unsafe fn insert_row_with_param(
 }
 
 unsafe fn set_status(status: HWND, text: &str) {
-    let mut w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    SendMessageW(
-        status,
-        SB_SETTEXTW,
-        WPARAM(0),
-        LPARAM(w.as_mut_ptr() as isize),
-    );
+    let w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let _ = SetWindowTextW(status, PCWSTR(w.as_ptr()));
+    let _ = InvalidateRect(status, None, true);
 }
 
 // ---- Formatting ----

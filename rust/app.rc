@@ -3,6 +3,10 @@
 // The icon ID "1" makes Explorer pick this as the application icon.
 1 ICON "../ClutterCutter.ico"
 
+// Application manifest (24 = RT_MANIFEST): comctl32 v6 + Win10 supportedOS,
+// required for visual styles and dark-mode theming.
+1 24 "app.manifest"
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 0,0,1,0
  PRODUCTVERSION 0,0,1,0
