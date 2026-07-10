@@ -15,5 +15,11 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
+          # PAT (fine-grained, contents+PRs on this repo): tags/Releases made
+          # with it DO trigger build.yml and winget-manifest.yml, so release
+          # assets and the winget manifest appear without manual dispatches.
+          # Falls back to the workflow token if the secret is missing/expired
+          # (then those two workflows need a manual "Run workflow" nudge).
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

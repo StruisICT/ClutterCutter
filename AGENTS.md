@@ -195,11 +195,16 @@ strict SemVer.
   open "release PR" updated from conventional commits on `main`; merging it tags
   + creates the Release. Version state lives in `.release-please-manifest.json`
   (currently `0.3.0`); `CHANGELOG.md` is generated — **do not hand-edit it**.
-  - **Gotcha:** tags created by `GITHUB_TOKEN` don't trigger workflows. The build
-    has a `release: [created, published]` trigger and a `workflow_dispatch` (with a
-    `tag` input) so the exes still get attached. If a Release ends up with no
-    binaries, go to **Actions → Build → Run workflow** and enter the tag. (A PAT
-    secret would make tag→exe fully automatic.)
+  - **Gotcha:** tags created by `GITHUB_TOKEN` don't trigger workflows (not even
+    the `release:` event). release-please therefore runs with the
+    **`RELEASE_PLEASE_TOKEN`** repo secret — a fine-grained PAT (this repo only;
+    Contents + Pull requests read/write). Tags/Releases made with it trigger
+    `build.yml` (attaches the exes) and `winget-manifest.yml` automatically.
+    If the secret is missing or expired the workflow falls back to the workflow
+    token and releases come out bare — then run **Actions → Build → Run
+    workflow** with the tag, and **Actions → winget manifest** with the version.
+    Rotate the PAT before it expires (github.com → Settings → Developer
+    settings → Fine-grained tokens), then `gh secret set RELEASE_PLEASE_TOKEN`.
 - **Open release PR:** there's usually an auto "chore(main): release X.Y.Z" PR
   open — merge it when you want to cut that version.
 - **winget:** right after a release, the **winget manifest** workflow
