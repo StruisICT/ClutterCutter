@@ -99,22 +99,47 @@ cargo run --bin cluttercutter-cli -- --temp        # enumerate safe-to-delete te
 ## Feature parity (Rust port vs C#)
 
 The Rust GUI (`gui.rs`) already implements: drive buttons with auto MFT-vs-walker
-selection, tree + size-sorted list, drill-in/breadcrumb-by-parent, five view
-modes (**Tree**, **Treemap**, **Top largest files**, **Oldest files**, **Temp
-files**), Dark/Light/Auto theme (incl. immersive dark title bar via DWM), the
-right-click context menu (Open in Explorer / Copy path / Cmd here / Recycle),
-and the keyboard shortcuts (F5 rescan, Esc stop, Backspace parent, Enter drill,
-Del recycle), plus the elevation prompt and About box.
+selection, tree + size-sorted list (always visible), drill-in/breadcrumb-by-parent,
+Dark/Light/Auto theme (incl. immersive dark title bar via DWM), the right-click
+context menu (Open in Explorer / Copy path / Cmd here / Recycle), and the
+keyboard shortcuts (F5 rescan, Esc stop, Backspace parent, Enter drill, Del
+recycle — Enter/Del act on the focused pane), plus the elevation prompt and
+About box.
 
 When adding a feature, check the C# app (`ClutterCutter.cs`) for the reference
 behavior and match it. If you intentionally diverge, note it here.
 
 **Intentional divergences (Rust-only):**
-- **Treemap view** (View ▸ Treemap): WinDirStat-style squarified treemap of the
-  current tree selection, custom-painted GDI child window replacing the
-  listview. Hover shows path+size in the status bar, click selects,
-  double-click a folder tile drills (syncs the tree), right-click opens the
-  shared context menu, Del recycles. The C# app has no treemap.
+- **Side panel layout**: the drive tree and the selected folder's list are
+  always visible; the View menu picks an optional extra view (**Treemap**,
+  **Top largest files**, **Oldest files**, **Safe-to-delete temp files**) shown
+  in a right-hand panel. The panel header has a **Detach** button (also View ▸
+  Detach side panel) that floats it in its own resizable window — closing the
+  float re-attaches. Theme sits in its own top-level menu. The C# app instead
+  swaps the single main view.
+- **Treemap view**: WinDirStat-style squarified treemap of the current tree
+  selection, custom-painted GDI child. Hover shows path+size in the status
+  bar, click selects, double-click a folder tile drills (syncs the tree),
+  right-click opens the shared context menu, Del recycles.
+- **Scan all drives**: button next to the per-drive buttons; scans every
+  volume sequentially (MFT where possible) into a synthetic "All drives" root.
+  Shell actions no-op on the synthetic root (it has an empty path). F5 re-runs
+  whichever scan (single or all) ran last.
+- **Recycle all** button in the temp-files panel: recycles every listed temp
+  file in one undoable shell operation, then rescans.
+- The **top/oldest side lists** support the full context menu + multi-select
+  Del recycle (rows carry (folder, file) pointers via `side_hits`).
+- **Accessibility (WCAG 2.2 AA)**: the message loop runs `IsDialogMessageW`
+  (main + floating frame) so Tab cycles all controls; the treemap is keyboard
+  operable (arrows move the tile selection spatially, Enter drills, Del
+  recycles, Apps key opens the context menu) and paints a two-tone
+  (white+black) focus ring around the canvas and selection ring around the
+  tile — chosen because no single color hits 3:1 across the tile palette.
+  Tile borders likewise pick black/white per tile by relative luminance
+  (threshold 0.18; anything in [0.10, 0.317] passes both ways). Dark mode
+  themes the buttons (`DarkMode_Explorer`) and paints window/panel backgrounds
+  via `WM_ERASEBKGND` (class brushes are fixed at registration). Keep these
+  invariants when touching theming or the treemap painter.
 
 ## Versioning (SemVer)
 
