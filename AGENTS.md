@@ -118,9 +118,10 @@ behavior and match it. If you intentionally diverge, note it here.
   float re-attaches. Theme sits in its own top-level menu. The C# app instead
   swaps the single main view.
 - **Treemap view**: WinDirStat-style squarified treemap of the current tree
-  selection, custom-painted GDI child. Hover shows path+size in the status
-  bar, click selects, double-click a folder tile drills (syncs the tree),
-  right-click opens the shared context menu, Del recycles.
+  selection, custom-painted GDI child. Folder tiles carry a title strip with
+  the folder name; leaf tiles show their name centered. Hover shows path+size
+  in the status bar, click selects, double-click a folder tile drills (syncs
+  the tree), right-click opens the shared context menu, Del recycles.
 - **Scan all drives**: button next to the per-drive buttons; scans every
   volume sequentially (MFT where possible) into a synthetic "All drives" root.
   Shell actions no-op on the synthetic root (it has an empty path). F5 re-runs
@@ -135,8 +136,11 @@ behavior and match it. If you intentionally diverge, note it here.
   recycles, Apps key opens the context menu) and paints a two-tone
   (white+black) focus ring around the canvas and selection ring around the
   tile — chosen because no single color hits 3:1 across the tile palette.
-  Tile borders likewise pick black/white per tile by relative luminance
-  (threshold 0.18; anything in [0.10, 0.317] passes both ways). Dark mode
+  Treemap tile fills are held above a relative-luminance floor
+  (`TILE_LUM_FLOOR` = 0.42, via `lighten_to_lum` blending each hue toward
+  white) so black label text clears **AAA** (1.4.6, 7:1) and black borders
+  clear AA (3:1) on every hue — a unit test asserts this for all 12 hues ×
+  file/folder. Don't drop the floor without re-checking that test. Dark mode
   themes the buttons (`DarkMode_Explorer`) and paints window/panel backgrounds
   via `WM_ERASEBKGND` (class brushes are fixed at registration). Keep these
   invariants when touching theming or the treemap painter.

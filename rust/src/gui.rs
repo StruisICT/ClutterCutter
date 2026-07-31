@@ -238,8 +238,13 @@ struct TreemapEntry {
     // folder for file tiles.
     folder: *const FolderNode,
     file: *const FileEntry, // null for folder tiles
-    depth: u32,
     hue_idx: usize,
+    // No child tiles rendered inside this one — parents get overdrawn, so
+    // only leaves carry a body label.
+    is_leaf: bool,
+    // Title-strip height reserved at the top of a folder tile (0 = none);
+    // children are laid out below it and the folder name is drawn in it.
+    header_h: i32,
 }
 
 struct AppState {
@@ -2248,29 +2253,42 @@ fn build_treemap_level(
         };
         match item {
             Item::Folder(c) => {
+                // Reserve a title strip when the tile is big enough to show
+                // one; children lay out below it (the WinDirStat-style header).
+                let header_h = if r.w >= 60.0 && r.h >= 34.0 {
+                    TREEMAP_HEADER_H
+                } else {
+                    0
+                };
+                let idx = entries.len();
                 entries.push(TreemapEntry {
                     rect,
                     folder: *c as *const _,
                     file: std::ptr::null(),
-                    depth,
                     hue_idx,
+                    is_leaf: false, // fixed up after recursion
+                    header_h,
                 });
-                // Inset children by 1px so the folder's own border stays visible.
+                // Inset children by 1px (+ the header strip) so the folder's
+                // own border and title stay visible.
                 let inner = Rectf {
                     x: r.x + 1.0,
-                    y: r.y + 1.0,
+                    y: r.y + 1.0 + header_h as f64,
                     w: r.w - 2.0,
-                    h: r.h - 2.0,
+                    h: r.h - 2.0 - header_h as f64,
                 };
                 build_treemap_level(entries, c, inner, depth + 1, Some(hue_idx));
+                // A leaf if no child tiles were emitted below it.
+                entries[idx].is_leaf = entries.len() == idx + 1;
             }
             Item::File(f) => {
                 entries.push(TreemapEntry {
                     rect,
                     folder: folder as *const _,
                     file: *f as *const _,
-                    depth,
                     hue_idx,
+                    is_leaf: true,
+                    header_h: 0,
                 });
             }
         }
@@ -2542,17 +2560,45 @@ const PALETTE_HUES: [f64; 12] = [
     210.0, 30.0, 130.0, 275.0, 55.0, 0.0, 180.0, 315.0, 95.0, 240.0, 160.0, 340.0,
 ];
 
-fn tile_color(hue_idx: usize, depth: u32, is_file: bool, is_dark: bool) -> u32 {
+// Every tile is a light surface with black labels: this relative-luminance
+// floor guarantees black text clears WCAG AAA (1.4.6, 7:1) — at 0.42 the ratio
+// is ~9.4:1 — and black borders clear AA (1.4.11, 3:1) on every hue.
+const TILE_LUM_FLOOR: f64 = 0.42;
+
+// Reserved title-strip height on folder tiles.
+const TREEMAP_HEADER_H: i32 = 16;
+
+fn tile_color(hue_idx: usize, is_file: bool) -> u32 {
     let hue = PALETTE_HUES[hue_idx % PALETTE_HUES.len()];
-    let sat = if is_file { 0.18 } else { 0.50 };
-    let dl = 0.035 * depth.min(8) as f64;
-    // Deeper tiles drift toward the theme's foreground so nesting reads.
-    let l = if is_dark {
-        (0.28 + dl).min(0.55)
-    } else {
-        (0.62 - dl).max(0.35)
-    };
-    hsl_to_colorref(hue, sat, l)
+    // Files read a touch paler/flatter than folders so the two kinds separate
+    // at a glance; both are pastel enough to carry black text.
+    let (sat, l) = if is_file { (0.30, 0.74) } else { (0.52, 0.62) };
+    let base = hsl_to_colorref(hue, sat, l);
+    // Hues differ wildly in luminance at equal HSL lightness (blue is dark,
+    // yellow light); blend each toward white until it clears the floor so the
+    // text-contrast guarantee holds for all of them.
+    lighten_to_lum(base, TILE_LUM_FLOOR)
+}
+
+// Blend a COLORREF toward white until its relative luminance reaches `floor`.
+// Binary search on the blend factor (luminance is monotonic in it).
+fn lighten_to_lum(color: u32, floor: f64) -> u32 {
+    if rel_luminance(color) >= floor {
+        return color;
+    }
+    let (r, g, b) = (color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF);
+    let mix = |c: u32, t: f64| (c as f64 + (255.0 - c as f64) * t).round().min(255.0) as u32;
+    let build = |t: f64| (mix(b, t) << 16) | (mix(g, t) << 8) | mix(r, t);
+    let (mut lo, mut hi) = (0.0f64, 1.0f64);
+    for _ in 0..12 {
+        let t = (lo + hi) / 2.0;
+        if rel_luminance(build(t)) >= floor {
+            hi = t;
+        } else {
+            lo = t;
+        }
+    }
+    build(hi)
 }
 
 // WCAG relative luminance of a COLORREF (0x00BBGGRR).
@@ -2615,30 +2661,71 @@ unsafe fn paint_treemap(hwnd: HWND, app: &AppState) {
     FillRect(mem, &rc, bg_brush);
     let _ = DeleteObject(bg_brush);
 
-    // Tile borders are the only boundary between same-lightness siblings, so
-    // they must hit WCAG 1.4.11's 3:1 against the tile they outline. No single
-    // color can, across the whole palette — pick black or white per tile by
-    // the tile's relative luminance (any threshold in [0.10, 0.317] guarantees
-    // >= 3:1 for the chosen side).
+    // All fills are light (>= TILE_LUM_FLOOR), so a black border always clears
+    // WCAG 1.4.11's 3:1 against the tile it outlines, and black label text
+    // clears AAA's 7:1.
     let white_brush = CreateSolidBrush(COLORREF(0x00FF_FFFF));
     let black_brush = CreateSolidBrush(COLORREF(0x0000_0000));
-    // Few distinct colors (hue × depth × kind), many tiles — cache brushes.
+    // Few distinct colors (hue × kind), many tiles — cache brushes.
     let mut brushes: HashMap<u32, windows::Win32::Graphics::Gdi::HBRUSH> = HashMap::new();
     for e in &app.treemap_entries {
-        let color = tile_color(e.hue_idx, e.depth, !e.file.is_null(), app.is_dark);
+        let color = tile_color(e.hue_idx, !e.file.is_null());
         let brush = *brushes
             .entry(color)
             .or_insert_with(|| CreateSolidBrush(COLORREF(color)));
         FillRect(mem, &e.rect, brush);
-        let border = if rel_luminance(color) >= 0.18 {
-            black_brush
-        } else {
-            white_brush
-        };
-        FrameRect(mem, &e.rect, border);
+        FrameRect(mem, &e.rect, black_brush);
     }
     for (_, b) in brushes {
         let _ = DeleteObject(b);
+    }
+
+    // Labels: folder names in their reserved title strip, leaf names centered
+    // in the tile body. Black on the light fills = AAA contrast.
+    SetBkMode(mem, TRANSPARENT);
+    SetTextColor(mem, COLORREF(0x0000_0000));
+    for e in &app.treemap_entries {
+        let (name, mut area, fmt) = if e.header_h > 0 {
+            // Title strip along the top of a folder tile.
+            let strip = RECT {
+                left: e.rect.left + 4,
+                top: e.rect.top,
+                right: e.rect.right - 3,
+                bottom: e.rect.top + e.header_h,
+            };
+            (
+                (*e.folder).name.as_str(),
+                strip,
+                DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+            )
+        } else if e.is_leaf
+            && (e.rect.right - e.rect.left) >= 42
+            && (e.rect.bottom - e.rect.top) >= 14
+        {
+            let body = RECT {
+                left: e.rect.left + 4,
+                top: e.rect.top,
+                right: e.rect.right - 3,
+                bottom: e.rect.bottom,
+            };
+            let name = if e.file.is_null() {
+                (*e.folder).name.as_str()
+            } else {
+                (*e.file).name.as_str()
+            };
+            (
+                name,
+                body,
+                DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+            )
+        } else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let mut label: Vec<u16> = name.encode_utf16().collect();
+        DrawTextW(mem, &mut label, &mut area, fmt);
     }
 
     if app.treemap_selected >= 0 {
@@ -3510,4 +3597,32 @@ fn format_count(n: i64) -> String {
         out.push(*c as char);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{rel_luminance, tile_color, PALETTE_HUES};
+
+    fn contrast(a: u32, b: u32) -> f64 {
+        let (la, lb) = (rel_luminance(a), rel_luminance(b));
+        let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    // Every tile fill must carry black labels at WCAG AAA (7:1) and black
+    // borders at AA (3:1). Guards the palette + luminance-floor invariant.
+    #[test]
+    fn every_tile_color_supports_aaa_black_text() {
+        const BLACK: u32 = 0x0000_0000;
+        for hue_idx in 0..PALETTE_HUES.len() {
+            for is_file in [false, true] {
+                let c = tile_color(hue_idx, is_file);
+                let ratio = contrast(c, BLACK);
+                assert!(
+                    ratio >= 7.0,
+                    "hue {hue_idx} file={is_file}: black-on-tile contrast {ratio:.2} < 7.0 (AAA)"
+                );
+            }
+        }
+    }
 }
