@@ -44,7 +44,7 @@ rust/                       # Rust port
   src/lib.rs                #   module list
   src/gui.rs                #   Win32 window/message-loop/WndProc, all views (~2.3k lines)
   src/scanner.rs            #   FindFirstFileExW recursive walker (LARGE_FETCH, parallel top-level fan-out)
-  src/mft.rs                #   NTFS MFT parser via \\.\C: raw volume reads (admin fast path)
+  src/mft.rs                #   NTFS MFT parser via \\.\C: raw volume reads (admin fast path); parses records in parallel (FRN == Vec index; see below)
   src/analysis.rs           #   pure tree-walk queries: top_n_files, oldest_n_files (bounded heaps)
   src/treemap.rs            #   pure squarified-treemap layout (unit-tested; GUI paints it via GDI)
   src/temp.rs               #   discover + scan "safe-to-delete" temp/cache locations
@@ -95,6 +95,15 @@ cargo run --bin cluttercutter-cli -- --temp        # enumerate safe-to-delete te
 
 > MFT mode and the GUI's MFT fast path require **Administrator** (raw `\\.\C:`
 > volume access). The GUI prompts to relaunch elevated at startup if it isn't.
+
+> **MFT parse is parallel.** Each read-chunk's FILE records are parsed across all
+> cores via `thread::scope` (`parse_chunk_parallel`), because a record's FRN is
+> exactly its ordinal position — so entries live in a `Vec<Option<MftEntry>>`
+> indexed by FRN (no hashing) and the chunk's byte-slice + entry-slice split at
+> identical record boundaries with no shared state. Parsing is pure
+> (`parse_record`); only the read is serial. ~1.6× faster on a large volume
+> (C:\ ≈ 8.5s → 5.3s here), identical results (verified old-vs-new on a
+> quiescent volume). If you touch this, keep FRN==index and re-verify totals.
 
 ## Feature parity (Rust port vs C#)
 
