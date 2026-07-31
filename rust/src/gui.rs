@@ -59,10 +59,11 @@ use windows::Win32::UI::Controls::{
     LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMTEXTW,
     LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
     LVS_EX_GRIDLINES, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NM_DBLCLK, NM_RCLICK,
-    TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
-    TVM_DELETEITEM, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR,
-    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
-    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT,
+    TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW,
+    TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW,
+    TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS,
+    TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus, SetFocus};
 use windows::Win32::UI::Shell::{
@@ -147,6 +148,8 @@ const TREEMAP_MAX_DEPTH: u32 = 24;
 const WM_APP_PROGRESS: u32 = WM_APP + 1;
 const WM_APP_DONE: u32 = WM_APP + 2;
 const WM_APP_TEMP_DONE: u32 = WM_APP + 3;
+// One drive of a scan-all finished; its result is waiting in `drive_inbox`.
+const WM_APP_DRIVE_DONE: u32 = WM_APP + 4;
 
 // Virtual key codes (avoid pulling another module just for these)
 const VK_F5: u16 = 0x74;
@@ -307,6 +310,19 @@ struct AppState {
     treemap_entries: Vec<TreemapEntry>,
     treemap_selected: i32,
     treemap_hover: i32,
+
+    // Incremental scan-all: drives are scanned on parallel worker threads and
+    // appended to the synthetic root one at a time as they finish. The root's
+    // children Vec is pre-reserved to the drive count so these pushes never
+    // reallocate — keeping the raw child pointers the tree items hold valid.
+    scan_all_active: bool,
+    drives_expected: usize,
+    drives_done: usize,
+    scan_all_first_err: Option<String>,
+    drive_inbox: Arc<Mutex<Vec<Result<FolderNode, String>>>>,
+    // At-most-one-in-flight guard for WM_APP_PROGRESS so a fast scanner can't
+    // flood the message queue and stall the UI.
+    progress_pending: Arc<AtomicBool>,
 }
 
 #[derive(Copy, Clone)]
@@ -387,6 +403,12 @@ pub fn run() {
             treemap_entries: Vec::new(),
             treemap_selected: -1,
             treemap_hover: -1,
+            scan_all_active: false,
+            drives_expected: 0,
+            drives_done: 0,
+            scan_all_first_err: None,
+            drive_inbox: Arc::new(Mutex::new(Vec::new())),
+            progress_pending: Arc::new(AtomicBool::new(false)),
         });
         let app_ptr = Box::into_raw(app);
 
@@ -519,6 +541,10 @@ unsafe extern "system" fn wnd_proc(
         }
         m if m == WM_APP_DONE => {
             on_scan_done(app);
+            LRESULT(0)
+        }
+        m if m == WM_APP_DRIVE_DONE => {
+            on_drive_done(app);
             LRESULT(0)
         }
         m if m == WM_APP_TEMP_DONE => {
@@ -1383,14 +1409,25 @@ unsafe fn begin_scan_ui(app: &mut AppState, status_text: &str) {
     }
 }
 
-// Progress callback shared by all drive scans.
-fn make_progress(send_hwnd: SendHwnd, shared: Arc<Mutex<ScanState>>) -> ProgressFn {
+// Progress callback shared by all drive scans. Posts WM_APP_PROGRESS only when
+// none is already queued (coalesced via `pending`), so a fast scanner — or
+// several parallel ones — can't outrun the UI thread and stall it.
+fn make_progress(
+    send_hwnd: SendHwnd,
+    shared: Arc<Mutex<ScanState>>,
+    pending: Arc<AtomicBool>,
+) -> ProgressFn {
     Box::new(move |p| {
         if let Ok(mut s) = shared.lock() {
             s.last_progress = p.clone();
         }
-        unsafe {
-            let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_PROGRESS, WPARAM(0), LPARAM(0));
+        if pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            unsafe {
+                let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_PROGRESS, WPARAM(0), LPARAM(0));
+            }
         }
     })
 }
@@ -1431,7 +1468,7 @@ unsafe fn start_scan(hwnd: HWND, app: &mut AppState, path: String, use_mft: bool
     let send_hwnd = SendHwnd(hwnd.0 as isize);
     let shared = app.shared.clone();
     let cancel = app.cancel.clone();
-    let progress = make_progress(send_hwnd, shared.clone());
+    let progress = make_progress(send_hwnd, shared.clone(), app.progress_pending.clone());
 
     std::thread::spawn(move || {
         let result = scan_one(&path, use_mft, cancel, progress);
@@ -1444,70 +1481,189 @@ unsafe fn start_scan(hwnd: HWND, app: &mut AppState, path: String, use_mft: bool
     });
 }
 
-// Scans every enumerated drive sequentially and composes the results under a
-// synthetic "All drives" root. Drives that fail (ejected, access denied) are
-// skipped; the scan only errors if *no* drive produced a result.
+// Scans every enumerated drive on its own worker thread (volumes are
+// independent, so this is safe and roughly as fast as the slowest single
+// drive) and appends each into a synthetic "All drives" root as it finishes.
+// The tree/list update per drive, so results appear progressively and in
+// alphabetical order; the root is auto-expanded. Drives that fail are skipped.
 unsafe fn start_scan_all(hwnd: HWND, app: &mut AppState) {
-    let targets: Vec<(String, bool)> = app
+    // Sort targets alphabetically by drive letter.
+    let mut targets: Vec<(String, bool)> = app
         .drives
         .iter()
         .map(|d| (d.root.clone(), d.is_ntfs && app.is_admin))
         .collect();
+    targets.sort_by(|a, b| a.0.cmp(&b.0));
     if targets.is_empty() {
         return;
     }
-    begin_scan_ui(
-        app,
-        &format!("Scanning all drives ({} volumes)...", targets.len()),
-    );
+    let n = targets.len();
+    begin_scan_ui(app, &format!("Scanning {n} drives..."));
     app.last_scan = Some(ScanRequest::AllDrives);
 
-    let send_hwnd = SendHwnd(hwnd.0 as isize);
-    let shared = app.shared.clone();
-    let cancel = app.cancel.clone();
-    let progress_shared = shared.clone();
+    // Create the synthetic root now, with capacity reserved for every drive so
+    // the incremental pushes in on_drive_done never reallocate the Vec (which
+    // would dangle the raw child pointers the tree items hold).
+    let mut root = FolderNode {
+        full_path: String::new(), // synthetic — shell actions no-op on it
+        name: "All drives".to_string(),
+        ..Default::default()
+    };
+    root.children = Vec::with_capacity(n);
+    app.root_node = Some(Box::new(root));
+    let root_ptr = app.root_node.as_deref().unwrap() as *const FolderNode;
+    let hti = insert_tree_item(app.tree, 0, &*root_ptr, false);
+    // Root is inserted while its children Vec is still empty, so the tree would
+    // treat it as a leaf; force the has-children flag so drives appended later
+    // show under an expandable node.
+    set_tree_item_has_children(app.tree, hti);
+    app.item_by_node.insert(root_ptr as isize, hti);
+    app.populated.insert(hti); // drives are appended by hand, not lazily
+    app.selected_node = root_ptr as isize;
+    SendMessageW(
+        app.tree,
+        TVM_SELECTITEM,
+        WPARAM(TVGN_CARET as usize),
+        LPARAM(hti),
+    );
 
-    std::thread::spawn(move || {
-        let mut root = FolderNode {
-            full_path: String::new(), // synthetic — shell actions no-op on it
-            name: "All drives".to_string(),
-            ..Default::default()
-        };
-        let mut first_err: Option<String> = None;
-        for (path, use_mft) in &targets {
-            if cancel.load(Ordering::SeqCst) {
-                break;
+    app.scan_all_active = true;
+    app.drives_expected = n;
+    app.drives_done = 0;
+    app.scan_all_first_err = None;
+    let inbox = Arc::new(Mutex::new(Vec::new()));
+    app.drive_inbox = inbox.clone();
+
+    let send_hwnd = SendHwnd(hwnd.0 as isize);
+    for (path, use_mft) in targets {
+        let inbox = inbox.clone();
+        let cancel = app.cancel.clone();
+        let progress = make_progress(send_hwnd, app.shared.clone(), app.progress_pending.clone());
+        std::thread::spawn(move || {
+            let res =
+                scan_one(&path, use_mft, cancel, progress).map_err(|e| format!("{path}: {e}"));
+            if let Ok(mut q) = inbox.lock() {
+                q.push(res);
             }
-            let progress = make_progress(send_hwnd, progress_shared.clone());
-            match scan_one(path, *use_mft, cancel.clone(), progress) {
-                Ok(node) => {
-                    root.size += node.size;
-                    root.file_count += node.file_count;
-                    root.folder_count += node.folder_count + 1;
-                    root.children.push(node);
-                }
-                Err(e) => {
-                    if first_err.is_none() {
-                        first_err = Some(format!("{path}: {e}"));
-                    }
+            unsafe {
+                let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_DRIVE_DONE, WPARAM(0), LPARAM(0));
+            }
+        });
+    }
+}
+
+// One or more drives finished: drain the inbox, append each into the root, and
+// refresh the visible views. Runs on the UI thread.
+unsafe fn on_drive_done(app: &mut AppState) {
+    if !app.scan_all_active {
+        return;
+    }
+    let drained: Vec<Result<FolderNode, String>> = {
+        let mut q = app.drive_inbox.lock().unwrap();
+        std::mem::take(&mut *q)
+    };
+    for res in drained {
+        app.drives_done += 1;
+        match res {
+            Ok(node) => append_drive(app, node),
+            Err(e) => {
+                if app.scan_all_first_err.is_none() {
+                    app.scan_all_first_err = Some(e);
                 }
             }
         }
-        let result = if root.children.is_empty() {
-            Err(first_err.unwrap_or_else(|| "no drives scanned".to_string()))
-        } else {
-            Ok(root)
-        };
-        if let Ok(mut s) = shared.lock() {
-            s.result = Some(result);
-        }
-        unsafe {
-            let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_DONE, WPARAM(0), LPARAM(0));
-        }
-    });
+    }
+
+    if app.drives_done >= app.drives_expected {
+        finish_scan_all(app);
+    } else if let Some(root) = app.root_node.as_deref() {
+        set_status(
+            app.status,
+            &format!(
+                "Scanned {}/{} drives — {} ({} files) so far...",
+                app.drives_done,
+                app.drives_expected,
+                format_bytes(root.size),
+                format_count(root.file_count),
+            ),
+        );
+    }
+}
+
+// Pushes a finished drive into the root and inserts its (alphabetically
+// sorted) tree item, keeping the root expanded so drives stay visible.
+unsafe fn append_drive(app: &mut AppState, node: FolderNode) {
+    let root_ptr = match app.root_node.as_deref() {
+        Some(r) => r as *const FolderNode,
+        None => return,
+    };
+    let root = app.root_node.as_deref_mut().unwrap();
+    root.size += node.size;
+    root.file_count += node.file_count;
+    root.folder_count += node.folder_count + 1;
+    root.children.push(node); // capacity reserved in start_scan_all — no realloc
+    let drive_ptr = root.children.last().unwrap() as *const FolderNode;
+
+    if let Some(&root_hti) = app.item_by_node.get(&(root_ptr as isize)) {
+        let hti = insert_tree_item(app.tree, root_hti, &*drive_ptr, true);
+        app.item_by_node.insert(drive_ptr as isize, hti);
+        SendMessageW(
+            app.tree,
+            TVM_EXPAND,
+            WPARAM(TVE_EXPAND.0 as usize),
+            LPARAM(root_hti),
+        );
+    }
+    // Keep the main list (showing the root's drives) current if root is selected.
+    if app.selected_node == root_ptr as isize {
+        populate_list_folders(app, &*root_ptr);
+    }
+}
+
+// Final housekeeping once every drive thread has reported.
+unsafe fn finish_scan_all(app: &mut AppState) {
+    app.scan_all_active = false;
+    app.scanning = false;
+    let _ = EnableWindow(app.stop_btn, false);
+    let _ = EnableWindow(app.scan_all_btn, true);
+    for b in &app.drive_buttons {
+        let _ = EnableWindow(*b, true);
+    }
+    // The global side views were empty during the scan; populate them now.
+    match app.side_view {
+        SideView::None | SideView::TempFiles => {}
+        SideView::TopFiles => populate_side_top_files(app),
+        SideView::OldestFiles => populate_side_oldest_files(app),
+        SideView::Treemap => rebuild_treemap(app),
+    }
+
+    let root = match app.root_node.as_deref() {
+        Some(r) => r,
+        None => return,
+    };
+    if root.children.is_empty() {
+        let msg = app
+            .scan_all_first_err
+            .clone()
+            .unwrap_or_else(|| "no drives scanned".to_string());
+        set_status(app.status, &format!("Scan failed: {msg}"));
+        return;
+    }
+    let mut summary = format!(
+        "All drives — {} ({} files, {} folders)",
+        format_bytes(root.size),
+        format_count(root.file_count),
+        format_count(root.folder_count),
+    );
+    if let Some(err) = &app.scan_all_first_err {
+        summary.push_str(&format!("  [some skipped: {err}]"));
+    }
+    set_status(app.status, &summary);
 }
 
 fn on_progress(app: &AppState) {
+    // Allow the next progress post through now that we're servicing this one.
+    app.progress_pending.store(false, Ordering::Release);
     let p = {
         let s = app.shared.lock().unwrap();
         s.last_progress.clone()
@@ -1569,7 +1725,7 @@ unsafe fn on_scan_done(app: &mut AppState) {
         .unwrap_or(std::ptr::null());
     if !root_ptr.is_null() {
         let root: &FolderNode = &*root_ptr;
-        let hti = insert_tree_item(app.tree, 0, root);
+        let hti = insert_tree_item(app.tree, 0, root, false);
         app.item_by_node.insert(root_ptr as isize, hti);
         populate_children(app, hti, root);
         SendMessageW(
@@ -1601,13 +1757,18 @@ unsafe fn populate_children(app: &mut AppState, parent_hti: isize, parent: &Fold
     for c in kids {
         // Only insert subdirectories as tree items; leaf-like nodes (no children)
         // still appear because every FolderNode here is a directory.
-        let hti = insert_tree_item(app.tree, parent_hti, c);
+        let hti = insert_tree_item(app.tree, parent_hti, c, false);
         let p = c as *const _ as isize;
         app.item_by_node.insert(p, hti);
     }
 }
 
-unsafe fn insert_tree_item(tree: HWND, parent_hti: isize, node: &FolderNode) -> isize {
+unsafe fn insert_tree_item(
+    tree: HWND,
+    parent_hti: isize,
+    node: &FolderNode,
+    sorted: bool,
+) -> isize {
     let mut name_w: Vec<u16> = node.name.encode_utf16().chain(std::iter::once(0)).collect();
     let has_children = if node.children.is_empty() { 0 } else { 1 };
     let item = TVITEMW {
@@ -1618,11 +1779,17 @@ unsafe fn insert_tree_item(tree: HWND, parent_hti: isize, node: &FolderNode) -> 
         lParam: LPARAM(node as *const _ as isize),
         ..Default::default()
     };
+    // `sorted` inserts the item in alphabetical position among its siblings
+    // (TVI_SORT); otherwise it's appended (TVI_LAST) and the caller controls
+    // order via pre-sorting.
+    let after = if sorted {
+        windows::Win32::UI::Controls::TVI_SORT.0
+    } else {
+        windows::Win32::UI::Controls::TVI_LAST.0
+    };
     let ins = windows::Win32::UI::Controls::TVINSERTSTRUCTW {
         hParent: windows::Win32::UI::Controls::HTREEITEM(parent_hti as _),
-        hInsertAfter: windows::Win32::UI::Controls::HTREEITEM(
-            windows::Win32::UI::Controls::TVI_LAST.0 as _,
-        ),
+        hInsertAfter: windows::Win32::UI::Controls::HTREEITEM(after as _),
         Anonymous: windows::Win32::UI::Controls::TVINSERTSTRUCTW_0 { item },
     };
     let r = SendMessageW(
@@ -1632,6 +1799,23 @@ unsafe fn insert_tree_item(tree: HWND, parent_hti: isize, node: &FolderNode) -> 
         LPARAM(&ins as *const _ as isize),
     );
     r.0 as isize
+}
+
+// Force a tree item to display as having children (an expand button), used
+// for the "All drives" root which is created before any drive is appended.
+unsafe fn set_tree_item_has_children(tree: HWND, hti: isize) {
+    let item = TVITEMW {
+        mask: TVIF_HANDLE | TVIF_CHILDREN,
+        hItem: windows::Win32::UI::Controls::HTREEITEM(hti as _),
+        cChildren: windows::Win32::UI::Controls::TVITEMEXW_CHILDREN(1),
+        ..Default::default()
+    };
+    SendMessageW(
+        tree,
+        TVM_SETITEMW,
+        WPARAM(0),
+        LPARAM(&item as *const _ as isize),
+    );
 }
 
 unsafe fn on_tree_expand(app: &mut AppState, hti: isize) {
@@ -1674,7 +1858,13 @@ unsafe fn on_tree_select(app: &mut AppState) {
 unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     let mut kids: Vec<&FolderNode> = node.children.iter().collect();
-    kids.sort_by_key(|n| std::cmp::Reverse(n.size));
+    // The synthetic "All drives" root (empty path) lists its drives
+    // alphabetically; every real folder lists children biggest-first.
+    if node.full_path.is_empty() {
+        kids.sort_by(|a, b| a.name.cmp(&b.name));
+    } else {
+        kids.sort_by_key(|n| std::cmp::Reverse(n.size));
+    }
     for (i, k) in kids.iter().enumerate() {
         insert_row_with_param(
             app.list,

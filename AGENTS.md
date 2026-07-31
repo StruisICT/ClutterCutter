@@ -123,11 +123,24 @@ behavior and match it. If you intentionally diverge, note it here.
   in the status bar, click selects, double-click a folder tile drills (syncs
   the tree), right-click opens the shared context menu, Del recycles.
 - **Scan all drives**: button next to the per-drive buttons; scans every
-  volume sequentially (MFT where possible) into a synthetic "All drives" root.
-  Shell actions no-op on the synthetic root (it has an empty path). F5 re-runs
-  whichever scan (single or all) ran last. Also **runs automatically on
-  startup** (kicked from `run()` right after the window shows), so the app
-  opens straight into a populated tree; drives scan in A→Z order.
+  volume (MFT where possible) into a synthetic "All drives" root. Shell actions
+  no-op on the synthetic root (it has an empty path). F5 re-runs whichever scan
+  (single or all) ran last. Also **runs automatically on startup** (kicked from
+  `run()` right after the window shows), so the app opens straight into a
+  populated tree.
+  - **Parallel + incremental**: each drive scans on its own worker thread
+    (volumes are independent → safe, and wall-clock ≈ the slowest drive, not
+    the sum). Drives are appended to the root one at a time as they finish
+    (`WM_APP_DRIVE_DONE` → `on_drive_done` → `append_drive`), so results appear
+    progressively. The root's `children` Vec is pre-reserved to the drive count
+    so these pushes never reallocate (which would dangle the raw child pointers
+    the tree items hold) — **keep that reservation** if you touch this.
+  - Drives are shown **alphabetically** (tree via `TVI_SORT`; the root's list
+    via a name-sort special-case in `populate_list_folders` keyed on the
+    empty synthetic path) and the root is **auto-expanded**
+    (`set_tree_item_has_children` + `TVM_EXPAND`).
+  - `WM_APP_PROGRESS` is **coalesced** (`progress_pending` AtomicBool, at most
+    one in flight) so parallel scanners can't flood the queue and stall the UI.
 - **Recycle all** button in the temp-files panel: recycles every listed temp
   file in one undoable shell operation, then rescans.
 - The **top/oldest side lists** support the full context menu + multi-select
