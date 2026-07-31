@@ -419,6 +419,11 @@ pub fn run() {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
 
+        // Kick off a full scan of every drive right away (alphabetical, since
+        // enumerate_drives walks A..Z). The worker posts results back once the
+        // message loop below is pumping.
+        start_scan_all(hwnd, &mut *app_ptr);
+
         let mut msg = MSG::default();
         loop {
             let r = GetMessageW(&mut msg, HWND::default(), 0, 0);

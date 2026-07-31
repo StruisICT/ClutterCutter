@@ -125,7 +125,9 @@ behavior and match it. If you intentionally diverge, note it here.
 - **Scan all drives**: button next to the per-drive buttons; scans every
   volume sequentially (MFT where possible) into a synthetic "All drives" root.
   Shell actions no-op on the synthetic root (it has an empty path). F5 re-runs
-  whichever scan (single or all) ran last.
+  whichever scan (single or all) ran last. Also **runs automatically on
+  startup** (kicked from `run()` right after the window shows), so the app
+  opens straight into a populated tree; drives scan in A→Z order.
 - **Recycle all** button in the temp-files panel: recycles every listed temp
   file in one undoable shell operation, then rescans.
 - The **top/oldest side lists** support the full context menu + multi-select
