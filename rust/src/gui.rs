@@ -105,6 +105,13 @@ const ID_STATUS: u16 = 400;
 // Side panel geometry
 const PANEL_W: i32 = 420;
 const PANEL_HEADER_H: i32 = 30;
+// Header button metrics. Buttons are laid out right-to-left with a uniform gap
+// and the title is clamped to the left of the leftmost button, so nothing
+// overlaps at any panel width.
+const PANEL_BTN_GAP: i32 = 6;
+const PANEL_BTN_H: i32 = 24;
+const DETACH_BTN_W: i32 = 74;
+const RECYCLE_BTN_W: i32 = 100;
 
 // Custom status strip height
 const STATUS_H: i32 = 24;
@@ -2260,21 +2267,49 @@ unsafe fn toggle_detach(hwnd: HWND, app: &mut AppState) {
 }
 
 // Positions the panel header (title strip + buttons) and the content view.
+// X of the leftmost header button for a given panel width — the title clamps
+// to its left. Buttons pin to the right edge, so this stays valid at any width.
+fn header_buttons_left_x(app: &AppState, panel_w: i32) -> i32 {
+    let detach_x = panel_w - PANEL_BTN_GAP - DETACH_BTN_W;
+    if app.side_view == SideView::TempFiles {
+        detach_x - PANEL_BTN_GAP - RECYCLE_BTN_W
+    } else {
+        detach_x
+    }
+}
+
 unsafe fn panel_layout(app: &AppState, panel: HWND) {
     let mut rc = RECT::default();
     let _ = GetClientRect(panel, &mut rc);
     let w = rc.right - rc.left;
     let h = rc.bottom - rc.top;
-    let btn_y = (PANEL_HEADER_H - 24) / 2;
-    let mut x = w - 75;
-    let _ = MoveWindow(app.btn_detach, x, btn_y, 70, 24, true);
+    let btn_y = (PANEL_HEADER_H - PANEL_BTN_H) / 2;
+    // Detach is rightmost; Recycle-all (temp view only) sits to its left.
+    let detach_x = w - PANEL_BTN_GAP - DETACH_BTN_W;
+    let _ = MoveWindow(
+        app.btn_detach,
+        detach_x,
+        btn_y,
+        DETACH_BTN_W,
+        PANEL_BTN_H,
+        true,
+    );
     if app.side_view == SideView::TempFiles {
-        x -= 95;
-        let _ = MoveWindow(app.btn_recycle_all, x, btn_y, 90, 24, true);
+        let recycle_x = detach_x - PANEL_BTN_GAP - RECYCLE_BTN_W;
+        let _ = MoveWindow(
+            app.btn_recycle_all,
+            recycle_x,
+            btn_y,
+            RECYCLE_BTN_W,
+            PANEL_BTN_H,
+            true,
+        );
     }
     let content_h = (h - PANEL_HEADER_H).max(0);
     let _ = MoveWindow(app.side_list, 0, PANEL_HEADER_H, w, content_h, true);
     let _ = MoveWindow(app.treemap, 0, PANEL_HEADER_H, w, content_h, true);
+    // Buttons moved — repaint the header so the title re-clamps.
+    let _ = InvalidateRect(panel, None, false);
 }
 
 unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
@@ -2297,10 +2332,13 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
 
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(fg));
+    // Clamp the title to the left of the leftmost button so they never overlap,
+    // whatever the panel width or which buttons are shown.
+    let title_right = (header_buttons_left_x(app, rc.right) - PANEL_BTN_GAP).max(8);
     let mut text_rc = RECT {
         left: 8,
         top: 0,
-        right: (rc.right - 180).max(8),
+        right: title_right,
         bottom: PANEL_HEADER_H,
     };
     let mut title_w: Vec<u16> = app.side_view.title().encode_utf16().collect();
