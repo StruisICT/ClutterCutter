@@ -151,9 +151,22 @@ behavior and match it. If you intentionally diverge, note it here.
   - `WM_APP_PROGRESS` is **coalesced** (`progress_pending` AtomicBool, at most
     one in flight) so parallel scanners can't flood the queue and stall the UI.
 - **Recycle all** button in the temp-files panel: recycles every listed temp
-  file in one undoable shell operation, then rescans.
+  file in one undoable background shell operation and clears the list.
 - The **top/oldest side lists** support the full context menu + multi-select
   Del recycle (rows carry (folder, file) pointers via `side_hits`).
+- **In-place delete (no rescan)**: recycling never triggers a full rescan. The
+  `SHFileOperationW` runs on a background thread (`recycle_in_background`), and
+  the in-memory tree is updated in place: the deleted folder's pointer (and all
+  its descendants') go into `deleted_nodes` — a tombstone set that every view
+  skips (`populate_list_folders`, `build_treemap_level`, the top/oldest hit
+  filter) — and ancestor `size`/`file_count`/`folder_count` totals are
+  decremented via `subtract_along_ancestors`. **Nodes are never removed from a
+  `children` Vec** (that would shift memory and dangle the raw pointers the tree
+  items / `side_hits` / `treemap_entries` hold) — they stay allocated and hidden
+  until the next full scan (which clears `deleted_nodes`). If a background
+  recycle reports failure, `on_recycle_done` falls back to a full rescan to
+  resync. The ancestor-total and subtree-collection math is unit-tested
+  (`subtract_along_ancestors`, `collect_folder_ptrs`).
 - **Accessibility (WCAG 2.2 AA)**: the message loop runs `IsDialogMessageW`
   (main + floating frame) so Tab cycles all controls; the treemap is keyboard
   operable (arrows move the tile selection spatially, Enter drills, Del
