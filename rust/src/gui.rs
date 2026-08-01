@@ -2420,6 +2420,13 @@ unsafe fn apply_side_view(hwnd: HWND, app: &mut AppState, view: SideView) {
         let _ = ShowWindow(app.panel, if visible { SW_SHOW } else { SW_HIDE });
         layout(hwnd, app);
     }
+    // Reposition the header buttons/content for the new view: `layout` above
+    // only sends the panel a WM_SIZE when its size actually changes, so on a
+    // same-size view switch the just-shown Recycle-all button would otherwise
+    // stay at its (0,0) creation spot, on top of the title.
+    if visible {
+        panel_layout(app, app.panel);
+    }
     let _ = InvalidateRect(app.panel, None, true);
 
     if !app.menu.is_invalid() {
