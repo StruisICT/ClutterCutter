@@ -304,8 +304,11 @@ _Last updated: 2026-07-10._
 - Rust port is at/near parity with the C# app (see Feature parity above).
 - A treemap view was built then **removed** at the user's request — don't
   re-add it without being asked.
+- The Rust port persists its **window size** to `%APPDATA%\ClutterCutter\window.cfg`
+  (saved on close in `WM_DESTROY`, restored in `run()` via `load_window_size`;
+  skipped while maximized). Theme is not yet persisted.
 - Ideas / candidate next work (none committed yet — confirm before building):
   - Bulk-delete from the Temp-files view (currently per-row recycle).
-  - Persisted theme/window state (C# uses `theme.cfg`, which is gitignored).
+  - Persist the theme choice too (window size already persists).
   - Make the Rust build the primary release artifact and retire the C# build
     once parity is verified.

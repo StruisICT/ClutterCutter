@@ -74,19 +74,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
     CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
     GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
-    GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, LoadCursorW, LoadIconW,
-    MessageBoxW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-    SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
-    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA,
-    HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MENUBARINFO,
-    MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU,
-    SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-    SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR,
-    WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
-    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, LoadCursorW,
+    LoadIconW, MessageBoxW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW,
+    SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW,
+    TranslateMessage, ACCEL, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
+    FVIRTKEY, GWLP_USERDATA, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MB_ICONINFORMATION,
+    MB_OK, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING,
+    MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
+    WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE,
+    WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD,
+    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -397,6 +397,9 @@ pub fn run() {
         });
         let app_ptr = Box::into_raw(app);
 
+        // Restore the last window size (persisted on close); fall back to a
+        // roomy default the first time.
+        let (init_w, init_h) = load_window_size();
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class_name,
@@ -404,8 +407,8 @@ pub fn run() {
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1500,
-            920,
+            init_w,
+            init_h,
             HWND::default(),
             HMENU::default(),
             hinstance,
@@ -458,6 +461,48 @@ pub fn run() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+}
+
+// ---- Window-size persistence ----
+//
+// The last window size is saved to %APPDATA%\ClutterCutter\window.cfg on close
+// and restored on open, so the app remembers how big the user made it.
+
+fn window_cfg_path() -> Option<std::path::PathBuf> {
+    let appdata = std::env::var_os("APPDATA")?;
+    Some(
+        std::path::Path::new(&appdata)
+            .join("ClutterCutter")
+            .join("window.cfg"),
+    )
+}
+
+fn load_window_size() -> (i32, i32) {
+    // Roomy first-run default.
+    let default = (1700, 900);
+    let Some(p) = window_cfg_path() else {
+        return default;
+    };
+    let Ok(s) = std::fs::read_to_string(&p) else {
+        return default;
+    };
+    let mut it = s.split_whitespace();
+    let w = it.next().and_then(|x| x.parse().ok()).unwrap_or(default.0);
+    let h = it.next().and_then(|x| x.parse().ok()).unwrap_or(default.1);
+    // Guard against a corrupt/absurd file.
+    (w.clamp(700, 20000), h.clamp(500, 20000))
+}
+
+fn save_window_size(w: i32, h: i32) {
+    if w < 200 || h < 200 {
+        return;
+    }
+    if let Some(p) = window_cfg_path() {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&p, format!("{w} {h}"));
     }
 }
 
@@ -542,6 +587,14 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_DESTROY => {
             app.cancel.store(true, Ordering::SeqCst);
+            // Persist the window size so next launch opens at the same size.
+            // Skip when maximized so we save the restored size, not the maxed one.
+            if !IsZoomed(hwnd).as_bool() {
+                let mut wr = RECT::default();
+                if GetWindowRect(hwnd, &mut wr).is_ok() {
+                    save_window_size(wr.right - wr.left, wr.bottom - wr.top);
+                }
+            }
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             drop(Box::from_raw(app_ptr));
             PostQuitMessage(0);
