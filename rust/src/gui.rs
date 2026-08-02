@@ -3084,16 +3084,8 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
     app.is_dark = is_dark;
     // Force a full frame + children repaint: the title/menu bar live in the
     // non-client area and don't pick up theme changes from a client-area
-    // invalidate alone.
-    let _ = SetWindowPos(
-        hwnd,
-        HWND::default(),
-        0,
-        0,
-        0,
-        0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-    );
+    // invalidate alone. The caption needs the extra nudge below.
+    nudge_caption_repaint(hwnd);
     let _ = DrawMenuBar(hwnd);
     let _ = RedrawWindow(
         hwnd,
@@ -3102,6 +3094,7 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
         RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
     );
     if !app.float_win.is_invalid() {
+        nudge_caption_repaint(app.float_win);
         let _ = RedrawWindow(
             app.float_win,
             None,
@@ -3111,6 +3104,25 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
     }
     let _ = InvalidateRect(app.panel, None, true);
     let _ = InvalidateRect(app.status, None, true);
+}
+
+// DWM caches the title bar, so flipping DWMWA_USE_IMMERSIVE_DARK_MODE with only
+// an SWP_FRAMECHANGED doesn't reliably recomposite the caption (it intermittently
+// keeps the old theme). A 1px size wobble forces DWM to repaint it. Skipped when
+// maximized, where a resize would un-maximize the window.
+unsafe fn nudge_caption_repaint(hwnd: HWND) {
+    let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED;
+    if IsZoomed(hwnd).as_bool() {
+        let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, 0, 0, flags | SWP_NOSIZE);
+        return;
+    }
+    let mut wr = RECT::default();
+    if GetWindowRect(hwnd, &mut wr).is_err() {
+        return;
+    }
+    let (w, h) = (wr.right - wr.left, wr.bottom - wr.top);
+    let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, w, h + 1, flags);
+    let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, w, h, flags);
 }
 
 // ---- Undocumented dark-mode plumbing ----
