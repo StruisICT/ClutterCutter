@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/StruisICT/ClutterCutter/compare/v0.5.0...v0.6.0) (2026-08-02)
+
+
+### Features
+
+* faster scanning + in-place delete (no rescan) + panel fix ([#33](https://github.com/StruisICT/ClutterCutter/issues/33)) ([c2cb29c](https://github.com/StruisICT/ClutterCutter/commit/c2cb29c11190a6ff25a46983a8a6ce3311c681f2))
+* labeled AAA treemap + auto-scan all drives on startup ([#31](https://github.com/StruisICT/ClutterCutter/issues/31)) ([5467316](https://github.com/StruisICT/ClutterCutter/commit/54673165e8e61645ad17f066e4a5d50f95c7bba3))
+* remove treemap + folder-browsing/panel UX (drill, files, alphabetical, resizable/draggable panel, size persistence) ([#35](https://github.com/StruisICT/ClutterCutter/issues/35)) ([3f24b41](https://github.com/StruisICT/ClutterCutter/commit/3f24b413661c553296614719d7a5cb1705845908))
+
 ## [0.5.0](https://github.com/StruisICT/ClutterCutter/compare/v0.4.0...v0.5.0) (2026-07-10)
 
 
