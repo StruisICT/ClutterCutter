@@ -46,7 +46,6 @@ rust/                       # Rust port
   src/scanner.rs            #   FindFirstFileExW recursive walker (LARGE_FETCH, parallel top-level fan-out)
   src/mft.rs                #   NTFS MFT parser via \\.\C: raw volume reads (admin fast path); parses records in parallel (FRN == Vec index; see below)
   src/analysis.rs           #   pure tree-walk queries: top_n_files, oldest_n_files (bounded heaps)
-  src/treemap.rs            #   pure squarified-treemap layout (unit-tested; GUI paints it via GDI)
   src/temp.rs               #   discover + scan "safe-to-delete" temp/cache locations
   src/types.rs              #   FolderNode / FileEntry / ScanProgress (mirror of the C# shapes)
   src/bin/cli.rs            #   console harness to exercise scanners without the GUI
@@ -120,17 +119,12 @@ behavior and match it. If you intentionally diverge, note it here.
 
 **Intentional divergences (Rust-only):**
 - **Side panel layout**: the drive tree and the selected folder's list are
-  always visible; the View menu picks an optional extra view (**Treemap**,
-  **Top largest files**, **Oldest files**, **Safe-to-delete temp files**) shown
-  in a right-hand panel. The panel header has a **Detach** button (also View ▸
+  always visible; the View menu picks an optional extra view (**Top largest
+  files**, **Oldest files**, **Safe-to-delete temp files**) shown in a
+  right-hand panel. The panel header has a **Detach** button (also View ▸
   Detach side panel) that floats it in its own resizable window — closing the
   float re-attaches. Theme sits in its own top-level menu. The C# app instead
   swaps the single main view.
-- **Treemap view**: WinDirStat-style squarified treemap of the current tree
-  selection, custom-painted GDI child. Folder tiles carry a title strip with
-  the folder name; leaf tiles show their name centered. Hover shows path+size
-  in the status bar, click selects, double-click a folder tile drills (syncs
-  the tree), right-click opens the shared context menu, Del recycles.
 - **Scan all drives**: button next to the per-drive buttons; scans every
   volume (MFT where possible) into a synthetic "All drives" root. Shell actions
   no-op on the synthetic root (it has an empty path). F5 re-runs whichever scan
@@ -158,29 +152,20 @@ behavior and match it. If you intentionally diverge, note it here.
   `SHFileOperationW` runs on a background thread (`recycle_in_background`), and
   the in-memory tree is updated in place: the deleted folder's pointer (and all
   its descendants') go into `deleted_nodes` — a tombstone set that every view
-  skips (`populate_list_folders`, `build_treemap_level`, the top/oldest hit
-  filter) — and ancestor `size`/`file_count`/`folder_count` totals are
+  skips (`populate_list_folders`, the top/oldest hit filter) — and ancestor
+  `size`/`file_count`/`folder_count` totals are
   decremented via `subtract_along_ancestors`. **Nodes are never removed from a
   `children` Vec** (that would shift memory and dangle the raw pointers the tree
-  items / `side_hits` / `treemap_entries` hold) — they stay allocated and hidden
-  until the next full scan (which clears `deleted_nodes`). If a background
-  recycle reports failure, `on_recycle_done` falls back to a full rescan to
-  resync. The ancestor-total and subtree-collection math is unit-tested
-  (`subtract_along_ancestors`, `collect_folder_ptrs`).
+  items / `side_hits` hold) — they stay allocated and hidden until the next full
+  scan (which clears `deleted_nodes`). If a background recycle reports failure,
+  `on_recycle_done` falls back to a full rescan to resync. The ancestor-total
+  and subtree-collection math is unit-tested (`subtract_along_ancestors`,
+  `collect_folder_ptrs`).
 - **Accessibility (WCAG 2.2 AA)**: the message loop runs `IsDialogMessageW`
-  (main + floating frame) so Tab cycles all controls; the treemap is keyboard
-  operable (arrows move the tile selection spatially, Enter drills, Del
-  recycles, Apps key opens the context menu) and paints a two-tone
-  (white+black) focus ring around the canvas and selection ring around the
-  tile — chosen because no single color hits 3:1 across the tile palette.
-  Treemap tile fills are held above a relative-luminance floor
-  (`TILE_LUM_FLOOR` = 0.42, via `lighten_to_lum` blending each hue toward
-  white) so black label text clears **AAA** (1.4.6, 7:1) and black borders
-  clear AA (3:1) on every hue — a unit test asserts this for all 12 hues ×
-  file/folder. Don't drop the floor without re-checking that test. Dark mode
-  themes the buttons (`DarkMode_Explorer`) and paints window/panel backgrounds
-  via `WM_ERASEBKGND` (class brushes are fixed at registration). Keep these
-  invariants when touching theming or the treemap painter.
+  (main + floating frame) so Tab cycles all controls. Dark mode themes the
+  buttons (`DarkMode_Explorer`) and paints window/panel backgrounds via
+  `WM_ERASEBKGND` (class brushes are fixed at registration). Keep these
+  invariants when touching theming.
 - **Dark-mode plumbing** (`rust/app.manifest` + `gui.rs`): the embedded
   manifest declares comctl32 v6 + the Win10 supportedOS GUID — without it the
   process gets classic comctl32 v5.82 and `SetWindowTheme`/`DarkMode_*` are
@@ -317,9 +302,13 @@ _Last updated: 2026-07-10._
   (the unreleased top-N / oldest / temp-files `feat:` commits bump the minor
   under SemVer, after switching `bump-patch-for-minor-pre-major` off).
 - Rust port is at/near parity with the C# app (see Feature parity above).
-- Treemap view shipped in the Rust port (see Intentional divergences above).
+- A treemap view was built then **removed** at the user's request — don't
+  re-add it without being asked.
+- The Rust port persists its **window size** to `%APPDATA%\ClutterCutter\window.cfg`
+  (saved on close in `WM_DESTROY`, restored in `run()` via `load_window_size`;
+  skipped while maximized). Theme is not yet persisted.
 - Ideas / candidate next work (none committed yet — confirm before building):
   - Bulk-delete from the Temp-files view (currently per-row recycle).
-  - Persisted theme/window state (C# uses `theme.cfg`, which is gitignored).
+  - Persist the theme choice too (window size already persists).
   - Make the Rust build the primary release artifact and retire the C# build
     once parity is verified.

@@ -2,7 +2,7 @@
 // GUI framework.
 //
 //   [drive buttons] [Scan all] [Stop]
-//   [TreeView] | [ListView] | [side panel: top files / oldest / temp / treemap]
+//   [TreeView] | [ListView] | [side panel: top files / oldest / temp]
 //   [status bar]
 //
 // Drive buttons auto-pick MFT vs FindFirstFileEx walker (MFT when NTFS + admin);
@@ -17,7 +17,6 @@ use crate::analysis::{oldest_n_files, top_n_files};
 use crate::mft::{is_ntfs_drive_root, MftScanner};
 use crate::scanner::{wide, wstr_to_string, ProgressFn, Scanner};
 use crate::temp::{self, TempFileEntry};
-use crate::treemap::{self, Rectf};
 use crate::types::{FileEntry, FolderNode, ScanProgress};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,16 +24,15 @@ use std::sync::{Arc, Mutex};
 
 use windows::core::{w, PCSTR, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    BOOL, COLORREF, FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
+    BOOL, COLORREF, FILETIME, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, BitBlt, ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC,
-    CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect,
-    GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow, ReleaseDC,
-    SelectObject, SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE, DT_CENTER, DT_END_ELLIPSIS,
+    BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColorBrush,
+    GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow, ReleaseDC, ScreenToClient,
+    SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE, DT_CENTER, DT_END_ELLIPSIS,
     DT_HIDEPREFIX, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, PAINTSTRUCT, RDW_ALLCHILDREN,
-    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, SRCCOPY, TRANSPARENT,
+    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -52,20 +50,24 @@ use windows::Win32::System::Registry::{
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
-    InitCommonControlsEx, SetWindowTheme, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
-    ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT,
-    LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS,
-    LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMW, LVM_GETNEXTITEM,
-    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE,
-    LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER,
-    LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE,
-    NM_DBLCLK, NM_RCLICK, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE,
-    TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW,
-    TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
-    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
-    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, ICC_BAR_CLASSES,
+    ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX,
+    LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW,
+    LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMW,
+    LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
+    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
+    LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES, LVS_REPORT,
+    LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NM_DBLCLK, NM_RCLICK, TASKDIALOGCONFIG,
+    TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
+    TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN, TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET,
+    TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
+    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
+    TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
+    TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus, SetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
+};
 use windows::Win32::UI::Shell::{
     IsUserAnAdmin, SHFileOperationW, ShellExecuteW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE,
     SHFILEOPSTRUCTW,
@@ -73,20 +75,20 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
     CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
-    GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetWindowLongPtrW, GetWindowRect,
-    GetWindowTextW, IsDialogMessageW, LoadCursorW, LoadIconW, MessageBoxW, MoveWindow,
-    PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow, SetMenu,
-    SetParent, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu,
-    TranslateAcceleratorW, TranslateMessage, ACCEL, BS_PUSHBUTTON, CREATESTRUCTW, CS_DBLCLKS,
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, DLGC_WANTARROWS, FVIRTKEY, GWLP_USERDATA, HMENU,
-    IDC_ARROW, IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MENUBARINFO, MENUITEMINFOW,
-    MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU,
+    GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
+    GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, LoadCursorW,
+    LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
+    SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
+    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA,
+    HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND,
+    MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
     SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_GETDLGCODE, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT,
-    WM_NOTIFY, WM_PAINT, WM_RBUTTONDOWN, WM_SETFOCUS, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD,
-    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE,
+    WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW,
+    WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -97,14 +99,16 @@ const ID_BTN_DETACH: u16 = 210;
 const ID_BTN_RECYCLE_ALL: u16 = 211;
 const ID_LIST: u16 = 300;
 const ID_TREE: u16 = 301;
-const ID_TREEMAP: u16 = 302;
 const ID_SIDE_LIST: u16 = 303;
 const ID_PANEL: u16 = 304;
+const ID_SPLITTER: u16 = 305;
 const ID_STATUS: u16 = 400;
 
 // Side panel geometry
 const PANEL_W: i32 = 420;
 const PANEL_HEADER_H: i32 = 30;
+// Draggable divider between the main list and the side panel.
+const SPLIT_W: i32 = 6;
 // Header button metrics. Buttons are laid out right-to-left with a uniform gap
 // and the title is clamped to the left of the leftmost button, so nothing
 // overlaps at any panel width.
@@ -140,16 +144,10 @@ const ID_MENU_VIEW_NONE: u16 = 5301;
 const ID_MENU_VIEW_TOPFILES: u16 = 5302;
 const ID_MENU_VIEW_OLDEST: u16 = 5303;
 const ID_MENU_VIEW_TEMP: u16 = 5304;
-const ID_MENU_VIEW_TREEMAP: u16 = 5305;
 const ID_MENU_VIEW_DETACH: u16 = 5310;
 
 // Number of files shown in the file-based views (top largest / oldest).
 const TOP_N_FILES: usize = 100;
-
-// Treemap tiles thinner than this many pixels aren't emitted (and their
-// subtrees aren't descended into) — they'd be invisible anyway.
-const TREEMAP_MIN_PX: f64 = 3.0;
-const TREEMAP_MAX_DEPTH: u32 = 24;
 
 // Custom messages
 const WM_APP_PROGRESS: u32 = WM_APP + 1;
@@ -166,11 +164,6 @@ const VK_ESCAPE: u16 = 0x1B;
 const VK_BACK: u16 = 0x08;
 const VK_RETURN: u16 = 0x0D;
 const VK_DELETE: u16 = 0x2E;
-const VK_LEFT: u16 = 0x25;
-const VK_UP: u16 = 0x26;
-const VK_RIGHT: u16 = 0x27;
-const VK_DOWN: u16 = 0x28;
-const VK_APPS: u16 = 0x5D;
 
 // ---- Drive info ----
 #[derive(Clone)]
@@ -209,7 +202,6 @@ enum SideView {
     TopFiles,
     OldestFiles,
     TempFiles,
-    Treemap,
 }
 
 impl SideView {
@@ -219,7 +211,6 @@ impl SideView {
             SideView::TopFiles => "Top largest files",
             SideView::OldestFiles => "Oldest files",
             SideView::TempFiles => "Safe-to-delete temp files",
-            SideView::Treemap => "Treemap",
         }
     }
 }
@@ -230,7 +221,6 @@ enum CtxTarget {
     #[default]
     MainList,
     SideList,
-    Treemap,
 }
 
 // What F5 should re-run.
@@ -238,25 +228,6 @@ enum CtxTarget {
 enum ScanRequest {
     Single(String, bool), // path, use_mft
     AllDrives,
-}
-
-// One painted tile of the treemap. Raw pointers into the pinned root_node
-// tree — same lifetime argument as the tree/list lParams: the scan result is
-// never mutated after completion, and the entries are cleared in start_scan
-// before the old tree drops.
-struct TreemapEntry {
-    rect: RECT,
-    // Owning folder: the folder itself for folder tiles, the containing
-    // folder for file tiles.
-    folder: *const FolderNode,
-    file: *const FileEntry, // null for folder tiles
-    hue_idx: usize,
-    // No child tiles rendered inside this one — parents get overdrawn, so
-    // only leaves carry a body label.
-    is_leaf: bool,
-    // Title-strip height reserved at the top of a folder tile (0 = none);
-    // children are laid out below it and the folder name is drawn in it.
-    header_h: i32,
 }
 
 struct AppState {
@@ -267,7 +238,6 @@ struct AppState {
     scan_all_btn: HWND,
     tree: HWND,
     list: HWND,
-    treemap: HWND,
     status: HWND,
 
     // Side panel: container (child of main or of the floating frame when
@@ -280,6 +250,11 @@ struct AppState {
     float_win: HWND,
     detached: bool,
     ctx_target: CtxTarget,
+    // Draggable divider between the main list and the panel; `panel_frac` is
+    // the panel's share of the width after the tree (so it grows on resize and
+    // the user can drag it).
+    splitter: HWND,
+    panel_frac: f64,
 
     scanning: bool,
     cancel: Arc<AtomicBool>,
@@ -304,21 +279,15 @@ struct AppState {
     side_view: SideView,
 
     // Rows of the file-based side views (top largest / oldest): (owning
-    // folder, file) pointer pairs, indexed by the row's lParam. Same pinning
-    // rules as treemap_entries; cleared in start_scan.
+    // folder, file) pointer pairs, indexed by the row's lParam. The scan tree
+    // is pinned and never mutated after completion, so these stay valid;
+    // cleared on the next scan.
     side_hits: Vec<(*const FolderNode, *const FileEntry)>,
 
     // Independent of the drive-scan tree: flat list of files discovered under
     // the known "safe-to-delete" temp locations. Populated by start_temp_scan.
     temp_entries: Vec<TempFileEntry>,
     temp_shared: Arc<Mutex<Option<Vec<TempFileEntry>>>>,
-
-    // Treemap view: laid-out tiles in paint order (parents before children,
-    // so reverse hit-testing finds the deepest tile), plus selection/hover
-    // indices into that Vec (-1 = none).
-    treemap_entries: Vec<TreemapEntry>,
-    treemap_selected: i32,
-    treemap_hover: i32,
 
     // Incremental scan-all: drives are scanned on parallel worker threads and
     // appended to the synthetic root one at a time as they finish. The root's
@@ -374,12 +343,12 @@ pub fn run() {
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: hinstance.into(),
-            hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+            hIcon: load_app_icon(),
             hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
             hbrBackground: GetSysColorBrush(COLOR_BTNFACE),
             lpszMenuName: PCWSTR::null(),
             lpszClassName: class_name,
-            hIconSm: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+            hIconSm: load_app_icon(),
         };
         if RegisterClassExW(&wc) == 0 {
             return;
@@ -393,13 +362,14 @@ pub fn run() {
             scan_all_btn: HWND::default(),
             tree: HWND::default(),
             list: HWND::default(),
-            treemap: HWND::default(),
             status: HWND::default(),
             panel: HWND::default(),
             side_list: HWND::default(),
             btn_detach: HWND::default(),
             btn_recycle_all: HWND::default(),
             float_win: HWND::default(),
+            splitter: HWND::default(),
+            panel_frac: 0.40,
             detached: false,
             ctx_target: CtxTarget::MainList,
             scanning: false,
@@ -418,9 +388,6 @@ pub fn run() {
             side_hits: Vec::new(),
             temp_entries: Vec::new(),
             temp_shared: Arc::new(Mutex::new(None)),
-            treemap_entries: Vec::new(),
-            treemap_selected: -1,
-            treemap_hover: -1,
             scan_all_active: false,
             drives_expected: 0,
             drives_done: 0,
@@ -432,6 +399,9 @@ pub fn run() {
         });
         let app_ptr = Box::into_raw(app);
 
+        // Restore the last window size (persisted on close); fall back to a
+        // roomy default the first time.
+        let (init_w, init_h) = load_window_size();
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class_name,
@@ -439,8 +409,8 @@ pub fn run() {
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1500,
-            920,
+            init_w,
+            init_h,
             HWND::default(),
             HMENU::default(),
             hinstance,
@@ -494,6 +464,63 @@ pub fn run() {
             DispatchMessageW(&msg);
         }
     }
+}
+
+// ---- Window-size persistence ----
+//
+// The last window size is saved to %APPDATA%\ClutterCutter\window.cfg on close
+// and restored on open, so the app remembers how big the user made it.
+
+fn window_cfg_path() -> Option<std::path::PathBuf> {
+    let appdata = std::env::var_os("APPDATA")?;
+    Some(
+        std::path::Path::new(&appdata)
+            .join("ClutterCutter")
+            .join("window.cfg"),
+    )
+}
+
+fn load_window_size() -> (i32, i32) {
+    // Roomy first-run default.
+    let default = (1700, 900);
+    let Some(p) = window_cfg_path() else {
+        return default;
+    };
+    let Ok(s) = std::fs::read_to_string(&p) else {
+        return default;
+    };
+    let mut it = s.split_whitespace();
+    let w = it.next().and_then(|x| x.parse().ok()).unwrap_or(default.0);
+    let h = it.next().and_then(|x| x.parse().ok()).unwrap_or(default.1);
+    // Guard against a corrupt/absurd file.
+    (w.clamp(700, 20000), h.clamp(500, 20000))
+}
+
+fn save_window_size(w: i32, h: i32) {
+    if w < 200 || h < 200 {
+        return;
+    }
+    if let Some(p) = window_cfg_path() {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&p, format!("{w} {h}"));
+    }
+}
+
+// Loads the app's own icon embedded by app.rc (resource id 1) so the window's
+// title bar / Alt-Tab icon matches the taskbar icon; falls back to the system
+// application icon if the resource can't be loaded.
+unsafe fn load_app_icon() -> HICON {
+    // PCWSTR(1) is MAKEINTRESOURCE(1) — a resource ordinal, not a real pointer.
+    #[allow(clippy::manual_dangling_ptr)]
+    let icon_ordinal = PCWSTR(1 as *const u16);
+    if let Ok(h) = GetModuleHandleW(None) {
+        if let Ok(icon) = LoadIconW(HINSTANCE(h.0), icon_ordinal) {
+            return icon;
+        }
+    }
+    LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
 }
 
 fn accel(vk: u16, cmd: u16) -> ACCEL {
@@ -577,6 +604,14 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_DESTROY => {
             app.cancel.store(true, Ordering::SeqCst);
+            // Persist the window size so next launch opens at the same size.
+            // Skip when maximized so we save the restored size, not the maxed one.
+            if !IsZoomed(hwnd).as_bool() {
+                let mut wr = RECT::default();
+                if GetWindowRect(hwnd, &mut wr).is_ok() {
+                    save_window_size(wr.right - wr.left, wr.bottom - wr.top);
+                }
+            }
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             drop(Box::from_raw(app_ptr));
             PostQuitMessage(0);
@@ -624,7 +659,6 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
         ID_MENU_VIEW_TOPFILES => apply_side_view(hwnd, app, SideView::TopFiles),
         ID_MENU_VIEW_OLDEST => apply_side_view(hwnd, app, SideView::OldestFiles),
         ID_MENU_VIEW_TEMP => apply_side_view(hwnd, app, SideView::TempFiles),
-        ID_MENU_VIEW_TREEMAP => apply_side_view(hwnd, app, SideView::Treemap),
         ID_MENU_VIEW_DETACH | ID_BTN_DETACH => toggle_detach(hwnd, app),
         ID_BTN_RECYCLE_ALL => recycle_all_temp(hwnd, app),
         ID_SCAN_ALL_BTN => {
@@ -655,9 +689,7 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
 // that has focus is the one the key should act on.
 unsafe fn focus_target(app: &AppState) -> CtxTarget {
     let f = GetFocus();
-    if f == app.treemap {
-        CtxTarget::Treemap
-    } else if f == app.side_list {
+    if f == app.side_list {
         CtxTarget::SideList
     } else {
         CtxTarget::MainList
@@ -745,21 +777,6 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
                 app.ctx_target
             };
             match target {
-                CtxTarget::Treemap => {
-                    if let Some((folder, file)) = treemap_selected_ptrs(app) {
-                        if id == ID_ACC_DRILL {
-                            if file.is_null() {
-                                select_tree_node(app, folder);
-                            }
-                        } else {
-                            // Files open their containing folder; folders themselves.
-                            let folder: &FolderNode = &*folder;
-                            if !folder.full_path.is_empty() {
-                                open_in_explorer(&folder.full_path);
-                            }
-                        }
-                    }
-                }
                 CtxTarget::SideList => {
                     // Side views hold files — open the containing folder.
                     if let Some(folder) = side_selected_folder(app) {
@@ -796,7 +813,6 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
         }
         ID_CTX_COPY => {
             let path = match app.ctx_target {
-                CtxTarget::Treemap => treemap_selected_path(app),
                 CtxTarget::SideList => side_selected_path(app),
                 CtxTarget::MainList => selected_list_node(app).map(|n| n.full_path.clone()),
             };
@@ -808,9 +824,6 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
         }
         ID_CTX_CMD => {
             let folder = match app.ctx_target {
-                CtxTarget::Treemap => {
-                    treemap_selected_ptrs(app).map(|(folder, _)| (*folder).full_path.clone())
-                }
                 CtxTarget::SideList => side_selected_folder(app),
                 CtxTarget::MainList => selected_list_node(app).map(|n| n.full_path.clone()),
             };
@@ -1029,10 +1042,10 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         LPARAM(ext),
     );
 
-    // Side panel — container for the extra views (top files / oldest / temp /
-    // treemap). Child of the main window while attached; re-parented into the
-    // floating frame when detached. Every custom class here finds AppState via
-    // its own GWLP_USERDATA.
+    // Side panel — container for the extra views (top files / oldest / temp).
+    // Child of the main window while attached; re-parented into the floating
+    // frame when detached. Every custom class here finds AppState via its own
+    // GWLP_USERDATA.
     let app_lp = app as *mut AppState as isize;
     let panel_class = w!("ClutterCutterPanel");
     let panel_wc = WNDCLASSEXW {
@@ -1054,7 +1067,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         style: Default::default(),
         lpfnWndProc: Some(float_proc),
         hInstance: hinstance.into(),
-        hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+        hIcon: load_app_icon(),
         hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
         hbrBackground: GetSysColorBrush(COLOR_BTNFACE),
         lpszClassName: float_class,
@@ -1078,6 +1091,36 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     )
     .expect("panel");
     SetWindowLongPtrW(app.panel, GWLP_USERDATA, app_lp);
+
+    // Draggable splitter between the main list and the panel.
+    let split_class = w!("ClutterCutterSplitter");
+    let split_wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(splitter_proc),
+        hInstance: hinstance.into(),
+        hCursor: LoadCursorW(None, IDC_SIZEWE).unwrap_or_default(),
+        hbrBackground: GetSysColorBrush(COLOR_BTNFACE),
+        lpszClassName: split_class,
+        ..Default::default()
+    };
+    RegisterClassExW(&split_wc);
+    app.splitter = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        split_class,
+        PCWSTR::null(),
+        WS_CHILD, // shown by layout() when the panel is attached
+        0,
+        80,
+        SPLIT_W,
+        500,
+        hwnd,
+        HMENU(ID_SPLITTER as isize as _),
+        hinstance,
+        None,
+    )
+    .expect("splitter");
+    SetWindowLongPtrW(app.splitter, GWLP_USERDATA, app_lp);
 
     app.btn_detach = CreateWindowExW(
         WINDOW_EX_STYLE(0),
@@ -1133,35 +1176,6 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         LPARAM(ext),
     );
 
-    // Treemap canvas — custom-painted child of the panel.
-    let tm_class = w!("ClutterCutterTreemap");
-    let tm_wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
-        lpfnWndProc: Some(treemap_proc),
-        hInstance: hinstance.into(),
-        hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
-        hbrBackground: HBRUSH::default(), // fully painted in WM_PAINT
-        lpszClassName: tm_class,
-        ..Default::default()
-    };
-    RegisterClassExW(&tm_wc);
-    app.treemap = CreateWindowExW(
-        WS_EX_CLIENTEDGE,
-        tm_class,
-        PCWSTR::null(),
-        WS_CHILD | WS_TABSTOP, // shown only for the Treemap side view
-        0,
-        PANEL_HEADER_H,
-        PANEL_W,
-        400,
-        app.panel,
-        HMENU(ID_TREEMAP as isize as _),
-        hinstance,
-        None,
-    )
-    .expect("treemap");
-    SetWindowLongPtrW(app.treemap, GWLP_USERDATA, app_lp);
     insert_column(app.list, 0, "Name", 320, false);
     insert_column(app.list, 1, "Size", 130, true);
     insert_column(app.list, 2, "Files", 100, true);
@@ -1293,12 +1307,6 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let _ = AppendMenuW(
         view_pop,
         MF_STRING,
-        ID_MENU_VIEW_TREEMAP as usize,
-        w!("Tree&map"),
-    );
-    let _ = AppendMenuW(
-        view_pop,
-        MF_STRING,
         ID_MENU_VIEW_TOPFILES as usize,
         w!("&Top largest files"),
     );
@@ -1368,7 +1376,7 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let _ = CheckMenuRadioItem(
         menu,
         ID_MENU_VIEW_NONE as u32,
-        ID_MENU_VIEW_TREEMAP as u32,
+        ID_MENU_VIEW_TEMP as u32,
         ID_MENU_VIEW_NONE as u32,
         MF_BYCOMMAND.0,
     );
@@ -1390,15 +1398,47 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     let body_h = (rc.bottom - top - STATUS_H).max(0);
     let tree_w = 320;
     let _ = MoveWindow(app.tree, 0, top, tree_w, body_h, true);
-    // The side panel takes a fixed strip on the right while attached; the
-    // main list gets whatever is left.
+    // The side panel takes `panel_frac` of the width after the tree, with a
+    // draggable splitter between it and the main list. Because it's a fraction,
+    // the panel grows with the window and the user can drag the split.
     let panel_here = app.side_view != SideView::None && !app.detached;
-    let panel_w = if panel_here { PANEL_W } else { 0 };
-    let list_w = (rc.right - tree_w - panel_w).max(0);
+    let split_w = if panel_here { SPLIT_W } else { 0 };
+    let avail = (rc.right - tree_w).max(0);
+    let panel_w = if panel_here {
+        let raw = (avail as f64 * app.panel_frac).round() as i32;
+        // Keep both panes usable.
+        raw.clamp(180, (avail - split_w - 180).max(180))
+    } else {
+        0
+    };
+    let list_w = (rc.right - tree_w - panel_w - split_w).max(0);
     let _ = MoveWindow(app.list, tree_w, top, list_w, body_h, true);
     if panel_here {
-        let _ = MoveWindow(app.panel, tree_w + list_w, top, panel_w, body_h, true);
+        let _ = MoveWindow(app.splitter, tree_w + list_w, top, split_w, body_h, true);
+        let _ = ShowWindow(app.splitter, SW_SHOW);
+        let _ = MoveWindow(
+            app.panel,
+            tree_w + list_w + split_w,
+            top,
+            panel_w,
+            body_h,
+            true,
+        );
+    } else {
+        let _ = ShowWindow(app.splitter, SW_HIDE);
     }
+    // Stretch the Name column so the folder list's columns always fill the
+    // list width — otherwise widening the window (which slides the flush-right
+    // panel over) leaves a growing block of empty list to the right of the
+    // last column. The other three columns are fixed (130 + 100 + 100).
+    let vscroll = GetSystemMetrics(SM_CXVSCROLL);
+    let name_w = (list_w - 130 - 100 - 100 - vscroll - 4).max(120);
+    SendMessageW(
+        app.list,
+        LVM_SETCOLUMNWIDTH,
+        WPARAM(0),
+        LPARAM(name_w as isize),
+    );
 }
 
 // Shared prologue for drive scans: reset all views/state that point into the
@@ -1415,16 +1455,12 @@ unsafe fn begin_scan_ui(app: &mut AppState, status_text: &str) {
     app.populated.clear();
     app.selected_node = 0;
     // These point into the tree that's about to drop — clear before it does.
-    app.treemap_entries.clear();
-    app.treemap_selected = -1;
-    app.treemap_hover = -1;
     app.side_hits.clear();
     // A fresh scan supersedes any in-place deletions.
     app.deleted_nodes.clear();
     if app.side_view == SideView::TopFiles || app.side_view == SideView::OldestFiles {
         SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     }
-    let _ = InvalidateRect(app.treemap, None, true);
     set_status(app.status, status_text);
     app.cancel.store(false, Ordering::SeqCst);
     app.scanning = true;
@@ -1660,7 +1696,6 @@ unsafe fn finish_scan_all(app: &mut AppState) {
         SideView::None | SideView::TempFiles => {}
         SideView::TopFiles => populate_side_top_files(app),
         SideView::OldestFiles => populate_side_oldest_files(app),
-        SideView::Treemap => rebuild_treemap(app),
     }
 
     let root = match app.root_node.as_deref() {
@@ -1761,12 +1796,11 @@ unsafe fn on_scan_done(app: &mut AppState) {
             LPARAM(hti),
         );
     }
-    // The tree-selection above repopulates the main list and (for Treemap)
-    // the canvas via on_tree_select. The file-ranking side views are global
-    // over the new tree; refresh them directly. TempFiles is independent of
-    // drive scans entirely.
+    // The tree-selection above repopulates the main list via on_tree_select.
+    // The file-ranking side views are global over the new tree; refresh them
+    // directly. TempFiles is independent of drive scans entirely.
     match app.side_view {
-        SideView::None | SideView::TempFiles | SideView::Treemap => {}
+        SideView::None | SideView::TempFiles => {}
         SideView::TopFiles => populate_side_top_files(app),
         SideView::OldestFiles => populate_side_oldest_files(app),
     }
@@ -1778,8 +1812,13 @@ unsafe fn populate_children(app: &mut AppState, parent_hti: isize, parent: &Fold
     if !app.populated.insert(parent_hti) {
         return;
     }
-    let mut kids: Vec<&FolderNode> = parent.children.iter().collect();
-    kids.sort_by_key(|n| std::cmp::Reverse(n.size));
+    let mut kids: Vec<&FolderNode> = parent
+        .children
+        .iter()
+        .filter(|c| !app.deleted_nodes.contains(&(*c as *const _ as isize)))
+        .collect();
+    // Alphabetical, matching the folder list.
+    kids.sort_by_key(|n| n.name.to_lowercase());
     for c in kids {
         // Only insert subdirectories as tree items; leaf-like nodes (no children)
         // still appear because every FolderNode here is a directory.
@@ -1874,31 +1913,33 @@ unsafe fn on_tree_select(app: &mut AppState) {
     app.selected_node = lparam;
     let node: &FolderNode = &*(lparam as *const FolderNode);
     populate_list_folders(app, node);
-    // The treemap is rooted at the tree selection; the file-ranking side
-    // views are global and ignore it.
-    if app.side_view == SideView::Treemap {
-        rebuild_treemap(app);
-    }
+    // Make sure this node's children exist as tree items (not just on expand),
+    // so double-clicking a folder row can keep drilling level after level —
+    // the list double-click selects a child's tree item, which must be present.
+    // populate_children is idempotent (guards on the `populated` set).
+    populate_children(app, hti, node);
 }
 
 unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
-    let mut kids: Vec<&FolderNode> = node
+
+    // Subfolders first, then the folder's own files — each group sorted
+    // case-insensitively by name. Tombstoned (recycled-in-place) folders are
+    // skipped.
+    let mut folders: Vec<&FolderNode> = node
         .children
         .iter()
         .filter(|c| !app.deleted_nodes.contains(&(*c as *const _ as isize)))
         .collect();
-    // The synthetic "All drives" root (empty path) lists its drives
-    // alphabetically; every real folder lists children biggest-first.
-    if node.full_path.is_empty() {
-        kids.sort_by(|a, b| a.name.cmp(&b.name));
-    } else {
-        kids.sort_by_key(|n| std::cmp::Reverse(n.size));
-    }
-    for (i, k) in kids.iter().enumerate() {
+    folders.sort_by_key(|n| n.name.to_lowercase());
+
+    let mut row = 0i32;
+    for k in &folders {
+        // lParam = the FolderNode pointer, so double-click drills into it and
+        // the context menu can act on it.
         insert_row_with_param(
             app.list,
-            i as i32,
+            row,
             &k.name,
             &[
                 format_bytes(k.size),
@@ -1907,6 +1948,22 @@ unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
             ],
             *k as *const _ as isize,
         );
+        row += 1;
+    }
+
+    let mut files: Vec<&FileEntry> = node.files.iter().collect();
+    files.sort_by_key(|f| f.name.to_lowercase());
+    for f in &files {
+        // lParam 0 marks a file row: not drillable, and folder-only actions
+        // (drill / open-in-explorer) skip it.
+        insert_row_with_param(
+            app.list,
+            row,
+            &f.name,
+            &[format_bytes(f.size), String::new(), String::new()],
+            0,
+        );
+        row += 1;
     }
 }
 
@@ -2043,26 +2100,6 @@ unsafe fn rescan_after_recycle(hwnd: HWND, app: &mut AppState) {
 
 unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget) {
     match target {
-        CtxTarget::Treemap => {
-            if let Some((folder, file)) = treemap_selected_ptrs(app) {
-                let folder_ref: &FolderNode = &*folder;
-                if file.is_null() {
-                    // Folder tile.
-                    if !folder_ref.full_path.is_empty() {
-                        recycle_in_background(hwnd, app, vec![folder_ref.full_path.clone()]);
-                        delete_folder_node(app, folder);
-                    }
-                } else {
-                    // File tile.
-                    let file_ref: &FileEntry = &*file;
-                    let path = join_path(&folder_ref.full_path, &file_ref.name);
-                    recycle_in_background(hwnd, app, vec![path]);
-                    adjust_ancestors(app, folder, file_ref.size, 1, 0, true);
-                    app.treemap_selected = -1;
-                    refresh_after_delete(app);
-                }
-            }
-        }
         CtxTarget::SideList => {
             let indices = selected_indices(app.side_list);
             if indices.is_empty() {
@@ -2191,9 +2228,9 @@ unsafe fn delete_folder_node(app: &mut AppState, node_ptr: *const FolderNode) {
     refresh_after_delete(app);
 }
 
-// Adds every folder pointer in `node`'s subtree to `deleted_nodes` (so file
-// queries and the treemap skip anything under it) and drops their tree
-// bookkeeping. Iterative to avoid deep recursion on deep trees.
+// Adds every folder pointer in `node`'s subtree to `deleted_nodes` (so the
+// folder list and file-ranking views skip anything under it) and drops their
+// tree bookkeeping. Iterative to avoid deep recursion on deep trees.
 unsafe fn mark_subtree_deleted(app: &mut AppState, node: &FolderNode) {
     let mut ptrs: Vec<*const FolderNode> = Vec::new();
     collect_folder_ptrs(node, &mut ptrs);
@@ -2302,7 +2339,6 @@ unsafe fn refresh_after_delete(app: &mut AppState) {
         }
     }
     match app.side_view {
-        SideView::Treemap => rebuild_treemap(app),
         SideView::TopFiles => populate_side_top_files(app),
         SideView::OldestFiles => populate_side_oldest_files(app),
         SideView::None | SideView::TempFiles => {}
@@ -2390,15 +2426,16 @@ unsafe fn apply_side_view(hwnd: HWND, app: &mut AppState, view: SideView) {
                 populate_side_temp(app);
             }
         }
-        SideView::Treemap => {
-            rebuild_treemap(app);
-        }
     }
 
-    // Inside the panel, the treemap canvas and the side list swap places.
-    let treemap_mode = view == SideView::Treemap;
-    let _ = ShowWindow(app.side_list, if treemap_mode { SW_HIDE } else { SW_SHOW });
-    let _ = ShowWindow(app.treemap, if treemap_mode { SW_SHOW } else { SW_HIDE });
+    let _ = ShowWindow(
+        app.side_list,
+        if view == SideView::None {
+            SW_HIDE
+        } else {
+            SW_SHOW
+        },
+    );
     let _ = ShowWindow(
         app.btn_recycle_all,
         if view == SideView::TempFiles {
@@ -2435,12 +2472,11 @@ unsafe fn apply_side_view(hwnd: HWND, app: &mut AppState, view: SideView) {
             SideView::TopFiles => ID_MENU_VIEW_TOPFILES,
             SideView::OldestFiles => ID_MENU_VIEW_OLDEST,
             SideView::TempFiles => ID_MENU_VIEW_TEMP,
-            SideView::Treemap => ID_MENU_VIEW_TREEMAP,
         } as u32;
         let _ = CheckMenuRadioItem(
             app.menu,
             ID_MENU_VIEW_NONE as u32,
-            ID_MENU_VIEW_TREEMAP as u32,
+            ID_MENU_VIEW_TEMP as u32,
             id,
             MF_BYCOMMAND.0,
         );
@@ -2477,6 +2513,16 @@ unsafe fn toggle_detach(hwnd: HWND, app: &mut AppState) {
             )
             .expect("float win");
             SetWindowLongPtrW(app.float_win, GWLP_USERDATA, app as *mut AppState as isize);
+            // The float frame is created lazily, so apply the current theme's
+            // dark title bar now (apply_theme only reaches it once it exists).
+            let use_dark = BOOL(if app.is_dark { 1 } else { 0 });
+            let _ = DwmSetWindowAttribute(
+                app.float_win,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &use_dark as *const _ as *const _,
+                std::mem::size_of::<BOOL>() as u32,
+            );
+            allow_dark_mode_for_window(app.float_win, app.is_dark);
         }
         app.detached = true;
         let _ = SetParent(app.panel, app.float_win);
@@ -2555,7 +2601,6 @@ unsafe fn panel_layout(app: &AppState, panel: HWND) {
     }
     let content_h = (h - PANEL_HEADER_H).max(0);
     let _ = MoveWindow(app.side_list, 0, PANEL_HEADER_H, w, content_h, true);
-    let _ = MoveWindow(app.treemap, 0, PANEL_HEADER_H, w, content_h, true);
     // Buttons moved — repaint the header so the title re-clamps.
     let _ = InvalidateRect(panel, None, false);
 }
@@ -2632,6 +2677,55 @@ unsafe extern "system" fn panel_proc(
     }
 }
 
+// The draggable divider between the main list and the side panel. Dragging it
+// updates `panel_frac` and re-flows the layout live.
+unsafe extern "system" fn splitter_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_SETCURSOR => {
+            let _ = SetCursor(LoadCursorW(None, IDC_SIZEWE).unwrap_or_default());
+            LRESULT(1)
+        }
+        WM_LBUTTONDOWN => {
+            SetCapture(hwnd);
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            if GetCapture() == hwnd {
+                let main = app.main_hwnd;
+                let mut pt = POINT::default();
+                let _ = GetCursorPos(&mut pt);
+                let _ = ScreenToClient(main, &mut pt);
+                let mut rc = RECT::default();
+                let _ = GetClientRect(main, &mut rc);
+                let tree_w = 320;
+                let avail = (rc.right - tree_w).max(1);
+                // The splitter's left edge tracks the cursor; the panel is
+                // everything to its right (minus the splitter width).
+                let panel_w = (rc.right - pt.x - SPLIT_W).clamp(180, (avail - 180).max(180));
+                app.panel_frac = (panel_w as f64 / avail as f64).clamp(0.1, 0.9);
+                layout(main, app);
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            let _ = ReleaseCapture();
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => erase_theme_bg(app, hwnd, HDC(wparam.0 as _)),
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
 unsafe extern "system" fn float_proc(
     hwnd: HWND,
     msg: u32,
@@ -2662,369 +2756,6 @@ unsafe extern "system" fn float_proc(
     }
 }
 
-// ---- Treemap view ----
-
-// Recomputes the tile layout for the current tree selection (or the scan root)
-// and repaints. Cheap enough to run on tree-select and resize: pure math over
-// the already-scanned tree, pruned at TREEMAP_MIN_PX.
-unsafe fn rebuild_treemap(app: &mut AppState) {
-    app.treemap_entries.clear();
-    app.treemap_selected = -1;
-    app.treemap_hover = -1;
-    let root_ptr: *const FolderNode = if app.selected_node != 0 {
-        app.selected_node as *const FolderNode
-    } else {
-        match app.root_node.as_deref() {
-            Some(r) => r,
-            None => {
-                let _ = InvalidateRect(app.treemap, None, true);
-                return;
-            }
-        }
-    };
-    let mut rc = RECT::default();
-    let _ = GetClientRect(app.treemap, &mut rc);
-    let bounds = Rectf {
-        x: rc.left as f64,
-        y: rc.top as f64,
-        w: (rc.right - rc.left) as f64,
-        h: (rc.bottom - rc.top) as f64,
-    };
-    build_treemap_level(
-        &mut app.treemap_entries,
-        &*root_ptr,
-        bounds,
-        0,
-        None,
-        &app.deleted_nodes,
-    );
-    let _ = InvalidateRect(app.treemap, None, true);
-}
-
-// Emits tiles for one folder's contents (subfolders + direct files) into
-// `bounds`, then recurses into each subfolder tile. `hue` is None only at the
-// top level, where each item founds its own color family. Folders tombstoned
-// by an in-place recycle (in `deleted`) are skipped.
-fn build_treemap_level(
-    entries: &mut Vec<TreemapEntry>,
-    folder: &FolderNode,
-    bounds: Rectf,
-    depth: u32,
-    hue: Option<usize>,
-    deleted: &HashSet<isize>,
-) {
-    if depth > TREEMAP_MAX_DEPTH || bounds.w < TREEMAP_MIN_PX || bounds.h < TREEMAP_MIN_PX {
-        return;
-    }
-    enum Item<'a> {
-        Folder(&'a FolderNode),
-        File(&'a FileEntry),
-    }
-    let mut items: Vec<(i64, Item)> = folder
-        .children
-        .iter()
-        .filter(|c| !deleted.contains(&(*c as *const _ as isize)))
-        .map(|c| (c.size, Item::Folder(c)))
-        .chain(folder.files.iter().map(|f| (f.size, Item::File(f))))
-        .collect();
-    // Descending size gives the squarified layout its best aspect ratios.
-    items.sort_by_key(|(s, _)| std::cmp::Reverse(*s));
-    let sizes: Vec<i64> = items.iter().map(|(s, _)| *s).collect();
-    let rects = treemap::layout(&sizes, bounds);
-    for (i, ((_, item), r)) in items.iter().zip(&rects).enumerate() {
-        if r.w < TREEMAP_MIN_PX || r.h < TREEMAP_MIN_PX {
-            continue;
-        }
-        let hue_idx = hue.unwrap_or(i);
-        let rect = RECT {
-            left: r.x.round() as i32,
-            top: r.y.round() as i32,
-            right: (r.x + r.w).round() as i32,
-            bottom: (r.y + r.h).round() as i32,
-        };
-        match item {
-            Item::Folder(c) => {
-                // Reserve a title strip when the tile is big enough to show
-                // one; children lay out below it (the WinDirStat-style header).
-                let header_h = if r.w >= 60.0 && r.h >= 34.0 {
-                    TREEMAP_HEADER_H
-                } else {
-                    0
-                };
-                let idx = entries.len();
-                entries.push(TreemapEntry {
-                    rect,
-                    folder: *c as *const _,
-                    file: std::ptr::null(),
-                    hue_idx,
-                    is_leaf: false, // fixed up after recursion
-                    header_h,
-                });
-                // Inset children by 1px (+ the header strip) so the folder's
-                // own border and title stay visible.
-                let inner = Rectf {
-                    x: r.x + 1.0,
-                    y: r.y + 1.0 + header_h as f64,
-                    w: r.w - 2.0,
-                    h: r.h - 2.0 - header_h as f64,
-                };
-                build_treemap_level(entries, c, inner, depth + 1, Some(hue_idx), deleted);
-                // A leaf if no child tiles were emitted below it.
-                entries[idx].is_leaf = entries.len() == idx + 1;
-            }
-            Item::File(f) => {
-                entries.push(TreemapEntry {
-                    rect,
-                    folder: folder as *const _,
-                    file: *f as *const _,
-                    hue_idx,
-                    is_leaf: true,
-                    header_h: 0,
-                });
-            }
-        }
-    }
-}
-
-unsafe extern "system" fn treemap_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
-    if app_ptr.is_null() {
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
-    }
-    let app = &mut *app_ptr;
-    match msg {
-        WM_ERASEBKGND => LRESULT(1), // fully painted in WM_PAINT (flicker-free)
-        WM_PAINT => {
-            paint_treemap(hwnd, app);
-            LRESULT(0)
-        }
-        WM_SIZE => {
-            if app.side_view == SideView::Treemap {
-                rebuild_treemap(app);
-            }
-            LRESULT(0)
-        }
-        // Keep arrow keys out of the dialog navigator — they move the tile
-        // selection (keyboard equivalent of clicking).
-        WM_GETDLGCODE => LRESULT(DLGC_WANTARROWS as isize),
-        WM_SETFOCUS | WM_KILLFOCUS => {
-            // Focused state is painted (ring around the canvas edge).
-            let _ = InvalidateRect(hwnd, None, false);
-            LRESULT(0)
-        }
-        WM_KEYDOWN => {
-            match wparam.0 as u16 {
-                VK_LEFT => treemap_move_selection(app, -1, 0),
-                VK_RIGHT => treemap_move_selection(app, 1, 0),
-                VK_UP => treemap_move_selection(app, 0, -1),
-                VK_DOWN => treemap_move_selection(app, 0, 1),
-                VK_APPS => {
-                    if let Some(e) = app
-                        .treemap_entries
-                        .get(app.treemap_selected.max(0) as usize)
-                    {
-                        // Open the shared context menu at the tile's center.
-                        let mut pt = POINT {
-                            x: (e.rect.left + e.rect.right) / 2,
-                            y: (e.rect.top + e.rect.bottom) / 2,
-                        };
-                        let _ = ClientToScreen(hwnd, &mut pt);
-                        app.ctx_target = CtxTarget::Treemap;
-                        show_context_menu_at(app.main_hwnd, pt);
-                    }
-                }
-                _ => return DefWindowProcW(hwnd, msg, wparam, lparam),
-            }
-            LRESULT(0)
-        }
-        WM_MOUSEMOVE => {
-            let (x, y) = lparam_xy(lparam);
-            let hit = treemap_hit_test(app, x, y);
-            if hit != app.treemap_hover {
-                app.treemap_hover = hit;
-                if hit >= 0 {
-                    let text = treemap_entry_status(&app.treemap_entries[hit as usize]);
-                    set_status(app.status, &text);
-                }
-            }
-            LRESULT(0)
-        }
-        WM_LBUTTONDOWN => {
-            // Take focus so Del/Enter accelerators target the treemap.
-            let _ = SetFocus(hwnd);
-            let (x, y) = lparam_xy(lparam);
-            let hit = treemap_hit_test(app, x, y);
-            if hit != app.treemap_selected {
-                app.treemap_selected = hit;
-                let _ = InvalidateRect(hwnd, None, false);
-            }
-            LRESULT(0)
-        }
-        WM_LBUTTONDBLCLK => {
-            let (x, y) = lparam_xy(lparam);
-            let hit = treemap_hit_test(app, x, y);
-            if hit >= 0 {
-                let e = &app.treemap_entries[hit as usize];
-                let (folder, file) = (e.folder, e.file);
-                if file.is_null() {
-                    select_tree_node(app, folder);
-                }
-            }
-            LRESULT(0)
-        }
-        WM_RBUTTONDOWN => {
-            let (x, y) = lparam_xy(lparam);
-            let hit = treemap_hit_test(app, x, y);
-            app.treemap_selected = hit;
-            let _ = InvalidateRect(hwnd, None, false);
-            if hit >= 0 {
-                // Route the shared context menu through the main window so its
-                // WM_COMMAND handlers fire there.
-                app.ctx_target = CtxTarget::Treemap;
-                show_context_menu(app.main_hwnd, app);
-            }
-            LRESULT(0)
-        }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-    }
-}
-
-fn lparam_xy(lparam: LPARAM) -> (i32, i32) {
-    let x = (lparam.0 & 0xFFFF) as u16 as i16 as i32;
-    let y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
-    (x, y)
-}
-
-// Keyboard navigation: move the selection to the nearest tile in the given
-// direction (by tile centers, favoring movement along the pressed axis).
-unsafe fn treemap_move_selection(app: &mut AppState, dx: i32, dy: i32) {
-    if app.treemap_entries.is_empty() {
-        return;
-    }
-    let cur = app.treemap_selected;
-    if cur < 0 {
-        app.treemap_selected = 0;
-        let _ = InvalidateRect(app.treemap, None, false);
-        return;
-    }
-    let center = |e: &TreemapEntry| {
-        (
-            (e.rect.left + e.rect.right) / 2,
-            (e.rect.top + e.rect.bottom) / 2,
-        )
-    };
-    let (ox, oy) = center(&app.treemap_entries[cur as usize]);
-    let mut best: i32 = -1;
-    let mut best_score = i64::MAX;
-    for (i, e) in app.treemap_entries.iter().enumerate() {
-        if i as i32 == cur {
-            continue;
-        }
-        let (cx, cy) = center(e);
-        let (vx, vy) = ((cx - ox) as i64, (cy - oy) as i64);
-        let along = vx * dx as i64 + vy * dy as i64;
-        if along <= 0 {
-            continue; // wrong direction
-        }
-        let perp = (vx * dy as i64 - vy * dx as i64).abs();
-        let score = along + 2 * perp;
-        if score < best_score {
-            best_score = score;
-            best = i as i32;
-        }
-    }
-    if best >= 0 {
-        app.treemap_selected = best;
-        let text = treemap_entry_status(&app.treemap_entries[best as usize]);
-        set_status(app.status, &text);
-        let _ = InvalidateRect(app.treemap, None, false);
-    }
-}
-
-// Entries are stored parents-before-children, so scanning backwards returns
-// the deepest tile under the cursor (siblings never overlap).
-fn treemap_hit_test(app: &AppState, x: i32, y: i32) -> i32 {
-    for (i, e) in app.treemap_entries.iter().enumerate().rev() {
-        if x >= e.rect.left && x < e.rect.right && y >= e.rect.top && y < e.rect.bottom {
-            return i as i32;
-        }
-    }
-    -1
-}
-
-unsafe fn treemap_selected_ptrs(app: &AppState) -> Option<(*const FolderNode, *const FileEntry)> {
-    if app.treemap_selected < 0 {
-        return None;
-    }
-    app.treemap_entries
-        .get(app.treemap_selected as usize)
-        .map(|e| (e.folder, e.file))
-}
-
-unsafe fn treemap_selected_path(app: &AppState) -> Option<String> {
-    treemap_selected_ptrs(app).map(|(folder, file)| {
-        if file.is_null() {
-            (*folder).full_path.clone()
-        } else {
-            join_path(&(*folder).full_path, &(*file).name)
-        }
-    })
-}
-
-unsafe fn treemap_entry_status(e: &TreemapEntry) -> String {
-    let folder = &*e.folder;
-    if e.file.is_null() {
-        format!(
-            "{} — {} ({} files)",
-            folder.full_path,
-            format_bytes(folder.size),
-            format_count(folder.file_count),
-        )
-    } else {
-        let f = &*e.file;
-        format!(
-            "{} — {}",
-            join_path(&folder.full_path, &f.name),
-            format_bytes(f.size),
-        )
-    }
-}
-
-// Expands/populates the tree down to `target` (tree items are lazily created,
-// so ancestors may not have items yet), then selects it — which triggers
-// on_tree_select and re-roots the treemap.
-unsafe fn select_tree_node(app: &mut AppState, target: *const FolderNode) {
-    let root_ptr: *const FolderNode = match app.root_node.as_deref() {
-        Some(r) => r,
-        None => return,
-    };
-    let mut path: Vec<*const FolderNode> = Vec::new();
-    if !find_node_path(&*root_ptr, target, &mut path) {
-        return;
-    }
-    for win in path.windows(2) {
-        let (parent, child) = (win[0], win[1]);
-        if !app.item_by_node.contains_key(&(child as isize)) {
-            if let Some(&phti) = app.item_by_node.get(&(parent as isize)) {
-                populate_children(app, phti, &*parent);
-            }
-        }
-    }
-    if let Some(&hti) = app.item_by_node.get(&(target as isize)) {
-        SendMessageW(
-            app.tree,
-            TVM_SELECTITEM,
-            WPARAM(TVGN_CARET as usize),
-            LPARAM(hti),
-        );
-    }
-}
-
 // DFS for the pointer-path root..=target. Recursion depth = folder nesting
 // depth, which Windows caps well below any stack concern.
 fn find_node_path(
@@ -3043,217 +2774,6 @@ fn find_node_path(
     }
     path.pop();
     false
-}
-
-// ---- Treemap painting ----
-
-const PALETTE_HUES: [f64; 12] = [
-    210.0, 30.0, 130.0, 275.0, 55.0, 0.0, 180.0, 315.0, 95.0, 240.0, 160.0, 340.0,
-];
-
-// Every tile is a light surface with black labels: this relative-luminance
-// floor guarantees black text clears WCAG AAA (1.4.6, 7:1) — at 0.42 the ratio
-// is ~9.4:1 — and black borders clear AA (1.4.11, 3:1) on every hue.
-const TILE_LUM_FLOOR: f64 = 0.42;
-
-// Reserved title-strip height on folder tiles.
-const TREEMAP_HEADER_H: i32 = 16;
-
-fn tile_color(hue_idx: usize, is_file: bool) -> u32 {
-    let hue = PALETTE_HUES[hue_idx % PALETTE_HUES.len()];
-    // Files read a touch paler/flatter than folders so the two kinds separate
-    // at a glance; both are pastel enough to carry black text.
-    let (sat, l) = if is_file { (0.30, 0.74) } else { (0.52, 0.62) };
-    let base = hsl_to_colorref(hue, sat, l);
-    // Hues differ wildly in luminance at equal HSL lightness (blue is dark,
-    // yellow light); blend each toward white until it clears the floor so the
-    // text-contrast guarantee holds for all of them.
-    lighten_to_lum(base, TILE_LUM_FLOOR)
-}
-
-// Blend a COLORREF toward white until its relative luminance reaches `floor`.
-// Binary search on the blend factor (luminance is monotonic in it).
-fn lighten_to_lum(color: u32, floor: f64) -> u32 {
-    if rel_luminance(color) >= floor {
-        return color;
-    }
-    let (r, g, b) = (color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF);
-    let mix = |c: u32, t: f64| (c as f64 + (255.0 - c as f64) * t).round().min(255.0) as u32;
-    let build = |t: f64| (mix(b, t) << 16) | (mix(g, t) << 8) | mix(r, t);
-    let (mut lo, mut hi) = (0.0f64, 1.0f64);
-    for _ in 0..12 {
-        let t = (lo + hi) / 2.0;
-        if rel_luminance(build(t)) >= floor {
-            hi = t;
-        } else {
-            lo = t;
-        }
-    }
-    build(hi)
-}
-
-// WCAG relative luminance of a COLORREF (0x00BBGGRR).
-fn rel_luminance(c: u32) -> f64 {
-    let ch = |v: u32| {
-        let s = v as f64 / 255.0;
-        if s <= 0.03928 {
-            s / 12.92
-        } else {
-            ((s + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    let r = ch(c & 0xFF);
-    let g = ch((c >> 8) & 0xFF);
-    let b = ch((c >> 16) & 0xFF);
-    0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
-// COLORREF is 0x00BBGGRR.
-fn hsl_to_colorref(h: f64, s: f64, l: f64) -> u32 {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let hp = h.rem_euclid(360.0) / 60.0;
-    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
-    let (r1, g1, b1) = match hp as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = l - c / 2.0;
-    let to8 = |v: f64| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u32;
-    (to8(b1) << 16) | (to8(g1) << 8) | to8(r1)
-}
-
-unsafe fn paint_treemap(hwnd: HWND, app: &AppState) {
-    let mut ps = PAINTSTRUCT::default();
-    let hdc = BeginPaint(hwnd, &mut ps);
-    let mut rc = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc);
-    let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
-    if w <= 0 || h <= 0 {
-        let _ = EndPaint(hwnd, &ps);
-        return;
-    }
-
-    // Off-screen buffer: tiles overdraw their parents, so painting direct
-    // would flicker badly.
-    let mem = CreateCompatibleDC(hdc);
-    let bmp = CreateCompatibleBitmap(hdc, w, h);
-    let old = SelectObject(mem, bmp);
-
-    let bg = if app.is_dark {
-        0x0020_2020
-    } else {
-        0x00FF_FFFF
-    };
-    let bg_brush = CreateSolidBrush(COLORREF(bg));
-    FillRect(mem, &rc, bg_brush);
-    let _ = DeleteObject(bg_brush);
-
-    // All fills are light (>= TILE_LUM_FLOOR), so a black border always clears
-    // WCAG 1.4.11's 3:1 against the tile it outlines, and black label text
-    // clears AAA's 7:1.
-    let white_brush = CreateSolidBrush(COLORREF(0x00FF_FFFF));
-    let black_brush = CreateSolidBrush(COLORREF(0x0000_0000));
-    // Few distinct colors (hue × kind), many tiles — cache brushes.
-    let mut brushes: HashMap<u32, windows::Win32::Graphics::Gdi::HBRUSH> = HashMap::new();
-    for e in &app.treemap_entries {
-        let color = tile_color(e.hue_idx, !e.file.is_null());
-        let brush = *brushes
-            .entry(color)
-            .or_insert_with(|| CreateSolidBrush(COLORREF(color)));
-        FillRect(mem, &e.rect, brush);
-        FrameRect(mem, &e.rect, black_brush);
-    }
-    for (_, b) in brushes {
-        let _ = DeleteObject(b);
-    }
-
-    // Labels: folder names in their reserved title strip, leaf names centered
-    // in the tile body. Black on the light fills = AAA contrast.
-    SetBkMode(mem, TRANSPARENT);
-    SetTextColor(mem, COLORREF(0x0000_0000));
-    for e in &app.treemap_entries {
-        let (name, mut area, fmt) = if e.header_h > 0 {
-            // Title strip along the top of a folder tile.
-            let strip = RECT {
-                left: e.rect.left + 4,
-                top: e.rect.top,
-                right: e.rect.right - 3,
-                bottom: e.rect.top + e.header_h,
-            };
-            (
-                (*e.folder).name.as_str(),
-                strip,
-                DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
-            )
-        } else if e.is_leaf
-            && (e.rect.right - e.rect.left) >= 42
-            && (e.rect.bottom - e.rect.top) >= 14
-        {
-            let body = RECT {
-                left: e.rect.left + 4,
-                top: e.rect.top,
-                right: e.rect.right - 3,
-                bottom: e.rect.bottom,
-            };
-            let name = if e.file.is_null() {
-                (*e.folder).name.as_str()
-            } else {
-                (*e.file).name.as_str()
-            };
-            (
-                name,
-                body,
-                DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
-            )
-        } else {
-            continue;
-        };
-        if name.is_empty() {
-            continue;
-        }
-        let mut label: Vec<u16> = name.encode_utf16().collect();
-        DrawTextW(mem, &mut label, &mut area, fmt);
-    }
-
-    if app.treemap_selected >= 0 {
-        if let Some(e) = app.treemap_entries.get(app.treemap_selected as usize) {
-            // Two-tone selection ring (white outer + black inner): >= 3:1
-            // against any tile color and both canvas backgrounds.
-            FrameRect(mem, &e.rect, white_brush);
-            let inner = RECT {
-                left: e.rect.left + 1,
-                top: e.rect.top + 1,
-                right: (e.rect.right - 1).max(e.rect.left + 1),
-                bottom: (e.rect.bottom - 1).max(e.rect.top + 1),
-            };
-            FrameRect(mem, &inner, black_brush);
-        }
-    }
-
-    // Focus indicator: two-tone ring around the canvas edge while the treemap
-    // owns keyboard focus (selection alone doesn't show where Enter/Del act).
-    if GetFocus() == hwnd {
-        FrameRect(mem, &rc, white_brush);
-        let inner = RECT {
-            left: rc.left + 1,
-            top: rc.top + 1,
-            right: (rc.right - 1).max(rc.left + 1),
-            bottom: (rc.bottom - 1).max(rc.top + 1),
-        };
-        FrameRect(mem, &inner, black_brush);
-    }
-    let _ = DeleteObject(white_brush);
-    let _ = DeleteObject(black_brush);
-
-    let _ = BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, old);
-    let _ = DeleteObject(bmp);
-    let _ = DeleteDC(mem);
-    let _ = EndPaint(hwnd, &ps);
 }
 
 fn format_filetime(raw: i64) -> String {
@@ -3467,7 +2987,7 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
     // stay white. Must run before the SetWindowTheme calls below, and every
     // themed control additionally needs the per-window allow call.
     set_preferred_app_mode(is_dark);
-    for w in [hwnd, app.float_win, app.panel, app.treemap, app.status] {
+    for w in [hwnd, app.float_win, app.panel, app.status] {
         if !w.is_invalid() {
             allow_dark_mode_for_window(w, is_dark);
         }
@@ -3564,16 +3084,8 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
     app.is_dark = is_dark;
     // Force a full frame + children repaint: the title/menu bar live in the
     // non-client area and don't pick up theme changes from a client-area
-    // invalidate alone.
-    let _ = SetWindowPos(
-        hwnd,
-        HWND::default(),
-        0,
-        0,
-        0,
-        0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-    );
+    // invalidate alone. The caption needs the extra nudge below.
+    nudge_caption_repaint(hwnd);
     let _ = DrawMenuBar(hwnd);
     let _ = RedrawWindow(
         hwnd,
@@ -3582,6 +3094,7 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
         RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
     );
     if !app.float_win.is_invalid() {
+        nudge_caption_repaint(app.float_win);
         let _ = RedrawWindow(
             app.float_win,
             None,
@@ -3589,9 +3102,27 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
             RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
         );
     }
-    let _ = InvalidateRect(app.treemap, None, true);
     let _ = InvalidateRect(app.panel, None, true);
     let _ = InvalidateRect(app.status, None, true);
+}
+
+// DWM caches the title bar, so flipping DWMWA_USE_IMMERSIVE_DARK_MODE with only
+// an SWP_FRAMECHANGED doesn't reliably recomposite the caption (it intermittently
+// keeps the old theme). A 1px size wobble forces DWM to repaint it. Skipped when
+// maximized, where a resize would un-maximize the window.
+unsafe fn nudge_caption_repaint(hwnd: HWND) {
+    let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED;
+    if IsZoomed(hwnd).as_bool() {
+        let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, 0, 0, flags | SWP_NOSIZE);
+        return;
+    }
+    let mut wr = RECT::default();
+    if GetWindowRect(hwnd, &mut wr).is_err() {
+        return;
+    }
+    let (w, h) = (wr.right - wr.left, wr.bottom - wr.top);
+    let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, w, h + 1, flags);
+    let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, w, h, flags);
 }
 
 // ---- Undocumented dark-mode plumbing ----
@@ -3794,19 +3325,64 @@ unsafe fn set_preferred_app_mode(dark: bool) {
 
 // ---- About dialog + admin relaunch ----
 
+const COFFEE_URL: &str = "https://buymeacoffee.com/struis112";
+const GITHUB_URL: &str = "https://github.com/StruisICT/ClutterCutter";
+const SITE_URL: &str = "https://struisict.com";
+
 unsafe fn show_about(hwnd: HWND) {
-    let text = w!("ClutterCutter — Rust port\n\
-         Version 0.0.1\n\
-         © Struis ICT\n\
-         \n\
+    // A TaskDialog (not a plain MessageBox) so the version tracks the crate
+    // version and the Buy-Me-a-Coffee / GitHub / site links are clickable.
+    let title = wide("About ClutterCutter");
+    let instruction = wide("ClutterCutter");
+    let content = wide(&format!(
+        "Version {ver} — Free Software from Struis ICT\n\n\
          Lightweight Windows disk-usage browser.\n\
-         FindFirstFileEx walker + NTFS MFT fast path.");
-    let _ = MessageBoxW(
-        hwnd,
-        text,
-        w!("About ClutterCutter"),
-        MB_OK | MB_ICONINFORMATION,
-    );
+         FindFirstFileEx walker + NTFS MFT fast path.\n\n\
+         <a href=\"{coffee}\">\u{2615} Buy me a coffee</a>\n\
+         <a href=\"{github}\">GitHub</a>   \u{00b7}   <a href=\"{site}\">struisict.com</a>",
+        ver = env!("CARGO_PKG_VERSION"),
+        coffee = COFFEE_URL,
+        github = GITHUB_URL,
+        site = SITE_URL,
+    ));
+    let cfg = TASKDIALOGCONFIG {
+        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
+        hwndParent: hwnd,
+        dwFlags: TDF_ENABLE_HYPERLINKS | TDF_USE_HICON_MAIN | TDF_ALLOW_DIALOG_CANCELLATION,
+        dwCommonButtons: TDCBF_OK_BUTTON,
+        pszWindowTitle: PCWSTR(title.as_ptr()),
+        Anonymous1: TASKDIALOGCONFIG_0 {
+            hMainIcon: load_app_icon(),
+        },
+        pszMainInstruction: PCWSTR(instruction.as_ptr()),
+        pszContent: PCWSTR(content.as_ptr()),
+        pfCallback: Some(about_task_callback),
+        ..Default::default()
+    };
+    let _ = TaskDialogIndirect(&cfg, None, None, None);
+}
+
+// Opens the clicked About-dialog link in the system browser.
+unsafe extern "system" fn about_task_callback(
+    _hwnd: HWND,
+    msg: TASKDIALOG_NOTIFICATIONS,
+    _wparam: WPARAM,
+    lparam: LPARAM,
+    _data: isize,
+) -> windows::core::HRESULT {
+    if msg == TDN_HYPERLINK_CLICKED {
+        // lparam is a PCWSTR to the href (one of our own compile-time URLs).
+        let url = PCWSTR(lparam.0 as *const u16);
+        let _ = ShellExecuteW(
+            HWND::default(),
+            w!("open"),
+            url,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_NORMAL,
+        );
+    }
+    windows::Win32::Foundation::S_OK
 }
 
 fn relaunch_elevated() {
@@ -4090,34 +3666,8 @@ fn format_count(n: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        collect_folder_ptrs, find_node_path, rel_luminance, subtract_along_ancestors, tile_color,
-        PALETTE_HUES,
-    };
+    use super::{collect_folder_ptrs, find_node_path, subtract_along_ancestors};
     use crate::types::{FileEntry, FolderNode};
-
-    fn contrast(a: u32, b: u32) -> f64 {
-        let (la, lb) = (rel_luminance(a), rel_luminance(b));
-        let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
-        (hi + 0.05) / (lo + 0.05)
-    }
-
-    // Every tile fill must carry black labels at WCAG AAA (7:1) and black
-    // borders at AA (3:1). Guards the palette + luminance-floor invariant.
-    #[test]
-    fn every_tile_color_supports_aaa_black_text() {
-        const BLACK: u32 = 0x0000_0000;
-        for hue_idx in 0..PALETTE_HUES.len() {
-            for is_file in [false, true] {
-                let c = tile_color(hue_idx, is_file);
-                let ratio = contrast(c, BLACK);
-                assert!(
-                    ratio >= 7.0,
-                    "hue {hue_idx} file={is_file}: black-on-tile contrast {ratio:.2} < 7.0 (AAA)"
-                );
-            }
-        }
-    }
 
     // Builds root{ a{ a1{} }, b{} } with known sizes/counts.
     fn sample_tree() -> FolderNode {
