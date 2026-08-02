@@ -2,7 +2,7 @@
 
 A lightweight Windows disk-usage browser built and maintained by **Struis ICT**.
 
-Single-file native `.exe` (~70 KB), no installer, no dependencies beyond the .NET Framework 4 runtime that already ships with every modern Windows.
+Single self-contained native `.exe`, no installer. The C# build needs only the in-box .NET Framework 4 runtime; the Rust build (packaged for winget) has no runtime dependency at all.
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/struis112)
 
@@ -10,15 +10,17 @@ If ClutterCutter saves you time hunting down what's eating your disk, consider [
 
 ## Features
 
-- **Drive picker** with live used/free bars — click any drive to scan it.
-- **Tree + list view** sorted by size; column-click to sort, double-click to drill in, breadcrumb to jump back.
-- **"Top Largest Folders"** view that flattens the entire subtree to a sorted list of biggest space hogs.
-- **MFT fast path** — when scanning an NTFS drive root as Administrator, ClutterCutter reads the Master File Table directly via `\\.\C:` and parses the records. ~5–10× faster than walking the file system; full C: drive (~1 M files / 100 GB) in ~6 seconds.
+- **Scan one drive, or all at once** — click a drive to scan it, or **Scan all drives** to scan every volume in parallel; results appear per-drive as each finishes, in alphabetical order. It also auto-scans all drives on startup, so it opens straight into a populated tree.
+- **MFT fast path** — on an NTFS drive as Administrator, ClutterCutter reads the Master File Table directly via `\\.\C:` and parses the records **in parallel across CPU cores**. Far faster than walking the filesystem — a full C: drive (~2 M files) in ~5 seconds.
 - **FindFirstFileEx fallback** with parallel top-level fan-out and `LARGE_FETCH` for non-admin / subfolder scans.
-- **Always-visible % progress** in the bottom-left status bar.
-- **Dark / Light / Auto theme** that follows the Windows system theme by default. Title bar, scroll bars, and progress bar all themed via the documented + undocumented uxtheme/dwmapi APIs.
+- **Folder tree + list** — browse the tree, or double-click through folders in the list level after level. Each folder lists its subfolders then its files, sorted alphabetically; the Name column stretches to fill the width.
+- **Side panel views** — an optional right-hand panel showing **Top largest files**, **Oldest files**, or **Safe-to-delete temp files** (with a one-click **Recycle all**). The panel grows with the window, has a **draggable splitter** between it and the list, and can **detach** into its own floating window.
+- **Delete without waiting** — recycling a folder or file updates the view in place on a background thread; no full rescan, no freeze.
+- **Dark / Light / Auto theme** that follows the Windows system theme by default. Title bar, menu bar, lists, tree, and panels are all themed via documented + undocumented uxtheme/dwmapi APIs.
+- **Remembers your window size** between launches.
+- **Always-visible progress** in the status bar; `Esc` stops a running scan.
 - **Admin elevation prompt** at startup if not elevated, with one-click UAC relaunch.
-- **Right-click actions:** Open in Explorer, Copy path, Open Command Prompt here, Properties, Recycle.
+- **Right-click / keyboard actions:** Open in Explorer, Copy path, Open Command Prompt here, Move to Recycle Bin.
 
 ## Download
 
