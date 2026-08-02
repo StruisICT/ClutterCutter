@@ -1285,10 +1285,16 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     let body_h = (rc.bottom - top - STATUS_H).max(0);
     let tree_w = 320;
     let _ = MoveWindow(app.tree, 0, top, tree_w, body_h, true);
-    // The side panel takes a fixed strip on the right while attached; the
-    // main list gets whatever is left.
+    // The side panel grows with the window while attached: it takes ~40% of
+    // the width after the tree (clamped so it stays usable but never dominates),
+    // and the main list keeps the rest — so both panes get larger on resize.
     let panel_here = app.side_view != SideView::None && !app.detached;
-    let panel_w = if panel_here { PANEL_W } else { 0 };
+    let panel_w = if panel_here {
+        let avail = (rc.right - tree_w).max(0);
+        (avail * 2 / 5).clamp(320, 1000).min(avail)
+    } else {
+        0
+    };
     let list_w = (rc.right - tree_w - panel_w).max(0);
     let _ = MoveWindow(app.list, tree_w, top, list_w, body_h, true);
     if panel_here {
