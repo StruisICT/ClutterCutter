@@ -50,14 +50,16 @@ use windows::Win32::System::Registry::{
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
-    InitCommonControlsEx, SetWindowTheme, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
-    ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT,
-    LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS,
-    LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMW, LVM_GETNEXTITEM,
-    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
+    InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, ICC_BAR_CLASSES,
+    ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX,
+    LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW,
+    LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMW,
+    LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
     LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
     LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES, LVS_REPORT,
-    LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NM_DBLCLK, NM_RCLICK, TVE_EXPAND, TVGN_CARET,
+    LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NM_DBLCLK, NM_RCLICK, TASKDIALOGCONFIG,
+    TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
+    TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN, TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET,
     TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
     TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
     TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
@@ -75,18 +77,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
     GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, LoadCursorW,
-    LoadIconW, MessageBoxW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
-    SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW,
-    SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW,
-    TranslateMessage, ACCEL, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION,
-    MB_ICONINFORMATION, MB_OK, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN,
-    TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE,
-    WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCACTIVATE,
-    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_BORDER,
-    WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
+    SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
+    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA,
+    HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND,
+    MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
+    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE,
+    WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW,
+    WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -3311,19 +3313,64 @@ unsafe fn set_preferred_app_mode(dark: bool) {
 
 // ---- About dialog + admin relaunch ----
 
+const COFFEE_URL: &str = "https://buymeacoffee.com/struis112";
+const GITHUB_URL: &str = "https://github.com/StruisICT/ClutterCutter";
+const SITE_URL: &str = "https://struisict.com";
+
 unsafe fn show_about(hwnd: HWND) {
-    let text = w!("ClutterCutter — Rust port\n\
-         Version 0.0.1\n\
-         © Struis ICT\n\
-         \n\
+    // A TaskDialog (not a plain MessageBox) so the version tracks the crate
+    // version and the Buy-Me-a-Coffee / GitHub / site links are clickable.
+    let title = wide("About ClutterCutter");
+    let instruction = wide("ClutterCutter");
+    let content = wide(&format!(
+        "Version {ver} — Free Software from Struis ICT\n\n\
          Lightweight Windows disk-usage browser.\n\
-         FindFirstFileEx walker + NTFS MFT fast path.");
-    let _ = MessageBoxW(
-        hwnd,
-        text,
-        w!("About ClutterCutter"),
-        MB_OK | MB_ICONINFORMATION,
-    );
+         FindFirstFileEx walker + NTFS MFT fast path.\n\n\
+         <a href=\"{coffee}\">\u{2615} Buy me a coffee</a>\n\
+         <a href=\"{github}\">GitHub</a>   \u{00b7}   <a href=\"{site}\">struisict.com</a>",
+        ver = env!("CARGO_PKG_VERSION"),
+        coffee = COFFEE_URL,
+        github = GITHUB_URL,
+        site = SITE_URL,
+    ));
+    let cfg = TASKDIALOGCONFIG {
+        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
+        hwndParent: hwnd,
+        dwFlags: TDF_ENABLE_HYPERLINKS | TDF_USE_HICON_MAIN | TDF_ALLOW_DIALOG_CANCELLATION,
+        dwCommonButtons: TDCBF_OK_BUTTON,
+        pszWindowTitle: PCWSTR(title.as_ptr()),
+        Anonymous1: TASKDIALOGCONFIG_0 {
+            hMainIcon: load_app_icon(),
+        },
+        pszMainInstruction: PCWSTR(instruction.as_ptr()),
+        pszContent: PCWSTR(content.as_ptr()),
+        pfCallback: Some(about_task_callback),
+        ..Default::default()
+    };
+    let _ = TaskDialogIndirect(&cfg, None, None, None);
+}
+
+// Opens the clicked About-dialog link in the system browser.
+unsafe extern "system" fn about_task_callback(
+    _hwnd: HWND,
+    msg: TASKDIALOG_NOTIFICATIONS,
+    _wparam: WPARAM,
+    lparam: LPARAM,
+    _data: isize,
+) -> windows::core::HRESULT {
+    if msg == TDN_HYPERLINK_CLICKED {
+        // lparam is a PCWSTR to the href (one of our own compile-time URLs).
+        let url = PCWSTR(lparam.0 as *const u16);
+        let _ = ShellExecuteW(
+            HWND::default(),
+            w!("open"),
+            url,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_NORMAL,
+        );
+    }
+    windows::Win32::Foundation::S_OK
 }
 
 fn relaunch_elevated() {
