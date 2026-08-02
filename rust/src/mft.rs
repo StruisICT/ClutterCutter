@@ -91,7 +91,9 @@ impl MftScanner {
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 None,
                 OPEN_EXISTING,
-                FILE_FLAGS_AND_ATTRIBUTES(0),
+                // FILE_FLAG_SEQUENTIAL_SCAN — hint the cache manager for the
+                // one-pass streaming read of the MFT.
+                FILE_FLAGS_AND_ATTRIBUTES(0x0800_0000),
                 None,
             )
         }
@@ -117,17 +119,24 @@ impl MftScanner {
             return Err("Could not parse MFT data runs from record 0.".into());
         }
 
-        // 3. Bulk-read the MFT, processing each record into an MftEntry
-        let est_count = (vd.MftValidDataLength as i64 / record_size as i64).max(100_000);
-        let cap = est_count.min(4_000_000) as usize;
-        let mut entries: HashMap<i64, MftEntry> = HashMap::with_capacity(cap);
-        let mut frn_cursor: i64 = 0;
+        // 3. Bulk-read the MFT, parsing records in parallel into a Vec indexed
+        //    by FRN. The FRN is exactly the record's ordinal position, so a Vec
+        //    (no hashing) suffices and parsing splits cleanly across cores.
+        let n_records = (vd.MftValidDataLength as i64 / record_size as i64).max(0) as usize;
+        let mut entries: Vec<Option<MftEntry>> = Vec::new();
+        entries.resize_with(n_records, || None);
+        let mut frn_cursor: usize = 0;
         let mut total_bytes_remaining = vd.MftValidDataLength as i64;
         self.mft_bytes_total
             .store(vd.MftValidDataLength as i64, Ordering::SeqCst);
         self.mft_bytes_read.store(0, Ordering::SeqCst);
-        const CHUNK: usize = 4 * 1024 * 1024;
+        // Bigger reads = fewer syscalls on the streaming pass.
+        const CHUNK: usize = 16 * 1024 * 1024;
         let mut buf = vec![0u8; CHUNK];
+        let nthreads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .max(1);
 
         for run in &runs {
             if self.cancel.load(Ordering::Relaxed) {
@@ -155,14 +164,21 @@ impl MftScanner {
                 if bytes_read == 0 {
                     break;
                 }
-                let process_bytes = (bytes_read as usize) - ((bytes_read as usize) % record_size);
-
-                let mut off = 0;
-                while off < process_bytes {
-                    apply_fixups(&mut buf, off, record_size, sector_size);
-                    self.process_record(&buf, off, record_size, frn_cursor, &mut entries);
-                    frn_cursor += 1;
-                    off += record_size;
+                let mut n_recs = (bytes_read as usize) / record_size;
+                // Never write past the FRN space we sized `entries` for.
+                n_recs = n_recs.min(entries.len() - frn_cursor);
+                if n_recs > 0 {
+                    let process_bytes = n_recs * record_size;
+                    let (files, size) = parse_chunk_parallel(
+                        &mut buf[..process_bytes],
+                        record_size,
+                        sector_size,
+                        &mut entries[frn_cursor..frn_cursor + n_recs],
+                        nthreads,
+                    );
+                    self.files_scanned.fetch_add(files, Ordering::Relaxed);
+                    self.total_size.fetch_add(size, Ordering::Relaxed);
+                    frn_cursor += n_recs;
                 }
                 pos += bytes_read as i64;
                 run_bytes -= bytes_read as i64;
@@ -177,144 +193,28 @@ impl MftScanner {
         self.build_tree(entries, drive)
     }
 
-    fn process_record(
-        &self,
-        buf: &[u8],
-        off: usize,
-        rec_size: usize,
-        frn: i64,
-        entries: &mut HashMap<i64, MftEntry>,
-    ) {
-        if off + rec_size > buf.len() {
-            return;
-        }
-        // "FILE" magic
-        if &buf[off..off + 4] != b"FILE" {
-            return;
-        }
-
-        let flags = u16_le(buf, off + 22);
-        let in_use = (flags & 0x01) != 0;
-        let is_dir = (flags & 0x02) != 0;
-        if !in_use {
-            return;
-        }
-
-        let first_attr_off = u16_le(buf, off + 20) as usize;
-        let mut p = off + first_attr_off;
-        let rec_end = off + rec_size;
-
-        let mut best_name: Option<String> = None;
-        let mut best_ns: u8 = 0xFF;
-        let mut parent_frn: i64 = -1;
-        let mut size: i64 = 0;
-        let mut size_found = false;
-        let mut last_write_ft: i64 = 0;
-
-        while p + 16 < rec_end {
-            let attr_type = u32_le(buf, p);
-            if attr_type == 0xFFFFFFFF {
-                break;
-            }
-            let alen = u32_le(buf, p + 4) as usize;
-            if alen == 0 || p + alen > rec_end {
-                break;
-            }
-            let non_resident = buf[p + 8];
-            let attr_name_len = buf[p + 9];
-
-            if attr_type == 0x10 && non_resident == 0 {
-                // $STANDARD_INFORMATION (resident) — modification time at value+8
-                let v_off = u16_le(buf, p + 20) as usize;
-                let v = p + v_off;
-                if v + 16 <= rec_end && last_write_ft == 0 {
-                    last_write_ft = i64_le(buf, v + 8);
-                }
-            } else if attr_type == 0x30 && non_resident == 0 {
-                // $FILE_NAME (resident) — prefer Win32 / Win32&DOS namespace
-                let v_off = u16_le(buf, p + 20) as usize;
-                let v = p + v_off;
-                if v + 66 <= rec_end {
-                    let parent_raw = i64_le(buf, v);
-                    let pfrn = parent_raw & 0x0000_FFFF_FFFF_FFFF;
-                    let mod_ft = i64_le(buf, v + 16);
-                    let _real_size = i64_le(buf, v + 48);
-                    let name_len = buf[v + 64] as usize;
-                    let ns = buf[v + 65];
-                    let name_byte_len = name_len * 2;
-                    if v + 66 + name_byte_len <= rec_end {
-                        let name = utf16le_to_string(&buf[v + 66..v + 66 + name_byte_len]);
-                        let prio = name_priority(ns);
-                        let cur_prio = if best_name.is_some() {
-                            name_priority(best_ns)
-                        } else {
-                            -1
-                        };
-                        if prio > cur_prio {
-                            best_name = Some(name);
-                            best_ns = ns;
-                            parent_frn = pfrn;
-                            if last_write_ft == 0 {
-                                last_write_ft = mod_ft;
-                            }
-                        }
-                    }
-                }
-            } else if attr_type == 0x80 && attr_name_len == 0 && !size_found {
-                // $DATA, default unnamed stream — first occurrence wins
-                if non_resident == 0 {
-                    size = u32_le(buf, p + 16) as i64;
-                } else if p + 56 <= rec_end {
-                    size = i64_le(buf, p + 48);
-                }
-                size_found = true;
-            }
-
-            p += alen;
-        }
-
-        let name = match best_name {
-            Some(n) => n,
-            None => return,
-        };
-        if is_dir {
-            size = 0;
-        }
-
-        if !is_dir {
-            self.files_scanned.fetch_add(1, Ordering::Relaxed);
-            self.total_size.fetch_add(size, Ordering::Relaxed);
-        }
-
-        entries.insert(
-            frn,
-            MftEntry {
-                parent_frn,
-                name,
-                size,
-                is_dir,
-                last_write_ft,
-            },
-        );
-    }
-
     fn build_tree(
         &self,
-        entries: HashMap<i64, MftEntry>,
+        entries: Vec<Option<MftEntry>>,
         drive: char,
     ) -> Result<FolderNode, String> {
-        if !entries.contains_key(&5) {
+        if entries.get(5).and_then(|e| e.as_ref()).is_none() {
             return Err("MFT root entry (FRN 5) not found.".into());
         }
 
-        // child FRNs per parent
+        // child FRNs per parent (FRN == Vec index).
         let mut kids: HashMap<i64, Vec<i64>> = HashMap::with_capacity(entries.len() / 4);
-        for (&frn, e) in &entries {
+        for (frn, slot) in entries.iter().enumerate() {
             if frn == 5 {
                 continue;
             }
-            if entries.contains_key(&e.parent_frn) {
-                kids.entry(e.parent_frn).or_default().push(frn);
+            let e = match slot {
+                Some(e) => e,
+                None => continue,
+            };
+            let pf = e.parent_frn;
+            if pf >= 0 && (pf as usize) < entries.len() && entries[pf as usize].is_some() {
+                kids.entry(pf).or_default().push(frn as i64);
             }
         }
 
@@ -322,7 +222,7 @@ impl MftScanner {
         let mut root_node = FolderNode {
             full_path: root_path.clone(),
             name: root_path.clone(),
-            last_modified_ft: entries[&5].last_write_ft,
+            last_modified_ft: entries[5].as_ref().unwrap().last_write_ft,
             ..Default::default()
         };
 
@@ -372,6 +272,158 @@ impl MftScanner {
             percent,
         });
     }
+}
+
+// Applies USA fixups and parses the records of one MFT read-chunk in parallel,
+// writing each into its FRN slot. Records map 1:1 and positionally to `out`, so
+// the slices split cleanly across threads with no shared state. Returns the
+// (file count, total file size) contributed by this chunk.
+fn parse_chunk_parallel(
+    buf: &mut [u8],
+    rec_size: usize,
+    sector_size: usize,
+    out: &mut [Option<MftEntry>],
+    nthreads: usize,
+) -> (i64, i64) {
+    let n = out.len();
+    if n == 0 {
+        return (0, 0);
+    }
+    let nthreads = nthreads.min(n).max(1);
+    let per = n.div_ceil(nthreads);
+
+    // Each (buf, out) chunk pair covers the same `per` records, so both split
+    // at identical record boundaries.
+    std::thread::scope(|s| {
+        let handles: Vec<_> = buf
+            .chunks_mut(per * rec_size)
+            .zip(out.chunks_mut(per))
+            .map(|(bc, oc)| {
+                s.spawn(move || {
+                    let (mut files, mut size) = (0i64, 0i64);
+                    for (i, slot) in oc.iter_mut().enumerate() {
+                        let off = i * rec_size;
+                        apply_fixups(bc, off, rec_size, sector_size);
+                        if let Some(e) = parse_record(bc, off, rec_size) {
+                            if !e.is_dir {
+                                files += 1;
+                                size += e.size;
+                            }
+                            *slot = Some(e);
+                        }
+                    }
+                    (files, size)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .fold((0i64, 0i64), |(a, b), (c, d)| (a + c, b + d))
+    })
+}
+
+// Parses one in-use FILE record into an MftEntry (or None for free/invalid
+// records or ones with no name). Pure — no shared state, so it runs on any
+// thread. `off` is relative to `buf`.
+fn parse_record(buf: &[u8], off: usize, rec_size: usize) -> Option<MftEntry> {
+    if off + rec_size > buf.len() {
+        return None;
+    }
+    if &buf[off..off + 4] != b"FILE" {
+        return None;
+    }
+
+    let flags = u16_le(buf, off + 22);
+    let in_use = (flags & 0x01) != 0;
+    let is_dir = (flags & 0x02) != 0;
+    if !in_use {
+        return None;
+    }
+
+    let first_attr_off = u16_le(buf, off + 20) as usize;
+    let mut p = off + first_attr_off;
+    let rec_end = off + rec_size;
+
+    let mut best_name: Option<String> = None;
+    let mut best_ns: u8 = 0xFF;
+    let mut parent_frn: i64 = -1;
+    let mut size: i64 = 0;
+    let mut size_found = false;
+    let mut last_write_ft: i64 = 0;
+
+    while p + 16 < rec_end {
+        let attr_type = u32_le(buf, p);
+        if attr_type == 0xFFFFFFFF {
+            break;
+        }
+        let alen = u32_le(buf, p + 4) as usize;
+        if alen == 0 || p + alen > rec_end {
+            break;
+        }
+        let non_resident = buf[p + 8];
+        let attr_name_len = buf[p + 9];
+
+        if attr_type == 0x10 && non_resident == 0 {
+            // $STANDARD_INFORMATION (resident) — modification time at value+8
+            let v_off = u16_le(buf, p + 20) as usize;
+            let v = p + v_off;
+            if v + 16 <= rec_end && last_write_ft == 0 {
+                last_write_ft = i64_le(buf, v + 8);
+            }
+        } else if attr_type == 0x30 && non_resident == 0 {
+            // $FILE_NAME (resident) — prefer Win32 / Win32&DOS namespace
+            let v_off = u16_le(buf, p + 20) as usize;
+            let v = p + v_off;
+            if v + 66 <= rec_end {
+                let parent_raw = i64_le(buf, v);
+                let pfrn = parent_raw & 0x0000_FFFF_FFFF_FFFF;
+                let mod_ft = i64_le(buf, v + 16);
+                let name_len = buf[v + 64] as usize;
+                let ns = buf[v + 65];
+                let name_byte_len = name_len * 2;
+                if v + 66 + name_byte_len <= rec_end {
+                    let name = utf16le_to_string(&buf[v + 66..v + 66 + name_byte_len]);
+                    let prio = name_priority(ns);
+                    let cur_prio = if best_name.is_some() {
+                        name_priority(best_ns)
+                    } else {
+                        -1
+                    };
+                    if prio > cur_prio {
+                        best_name = Some(name);
+                        best_ns = ns;
+                        parent_frn = pfrn;
+                        if last_write_ft == 0 {
+                            last_write_ft = mod_ft;
+                        }
+                    }
+                }
+            }
+        } else if attr_type == 0x80 && attr_name_len == 0 && !size_found {
+            // $DATA, default unnamed stream — first occurrence wins
+            if non_resident == 0 {
+                size = u32_le(buf, p + 16) as i64;
+            } else if p + 56 <= rec_end {
+                size = i64_le(buf, p + 48);
+            }
+            size_found = true;
+        }
+
+        p += alen;
+    }
+
+    let name = best_name?;
+    if is_dir {
+        size = 0;
+    }
+    Some(MftEntry {
+        parent_frn,
+        name,
+        size,
+        is_dir,
+        last_write_ft,
+    })
 }
 
 // ----------------------------------------------------------------------------
@@ -589,7 +641,7 @@ fn build_subtree(
     frn: i64,
     node: &mut FolderNode,
     node_path: &str,
-    entries: &HashMap<i64, MftEntry>,
+    entries: &[Option<MftEntry>],
     kids: &HashMap<i64, Vec<i64>>,
     track_files: bool,
 ) {
@@ -598,7 +650,7 @@ fn build_subtree(
         None => return,
     };
     for &child_frn in kid_frns {
-        let c = match entries.get(&child_frn) {
+        let c = match entries.get(child_frn as usize).and_then(|e| e.as_ref()) {
             Some(e) => e,
             None => continue,
         };

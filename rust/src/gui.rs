@@ -55,12 +55,13 @@ use windows::Win32::UI::Controls::{
     InitCommonControlsEx, SetWindowTheme, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
     ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT,
     LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS,
-    LVM_DELETECOLUMN, LVM_GETHEADER, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
-    LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMTEXTW,
-    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
-    LVS_EX_GRIDLINES, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NM_DBLCLK, NM_RCLICK,
-    TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
-    TVM_DELETEITEM, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR,
+    LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMW, LVM_GETNEXTITEM,
+    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE,
+    LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE,
+    NM_DBLCLK, NM_RCLICK, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE,
+    TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW,
+    TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
     TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
     TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
@@ -104,6 +105,13 @@ const ID_STATUS: u16 = 400;
 // Side panel geometry
 const PANEL_W: i32 = 420;
 const PANEL_HEADER_H: i32 = 30;
+// Header button metrics. Buttons are laid out right-to-left with a uniform gap
+// and the title is clamped to the left of the leftmost button, so nothing
+// overlaps at any panel width.
+const PANEL_BTN_GAP: i32 = 6;
+const PANEL_BTN_H: i32 = 24;
+const DETACH_BTN_W: i32 = 74;
+const RECYCLE_BTN_W: i32 = 100;
 
 // Custom status strip height
 const STATUS_H: i32 = 24;
@@ -147,6 +155,10 @@ const TREEMAP_MAX_DEPTH: u32 = 24;
 const WM_APP_PROGRESS: u32 = WM_APP + 1;
 const WM_APP_DONE: u32 = WM_APP + 2;
 const WM_APP_TEMP_DONE: u32 = WM_APP + 3;
+// One drive of a scan-all finished; its result is waiting in `drive_inbox`.
+const WM_APP_DRIVE_DONE: u32 = WM_APP + 4;
+// A background recycle finished; its success flag is in `recycle_result`.
+const WM_APP_RECYCLE_DONE: u32 = WM_APP + 5;
 
 // Virtual key codes (avoid pulling another module just for these)
 const VK_F5: u16 = 0x74;
@@ -307,6 +319,28 @@ struct AppState {
     treemap_entries: Vec<TreemapEntry>,
     treemap_selected: i32,
     treemap_hover: i32,
+
+    // Incremental scan-all: drives are scanned on parallel worker threads and
+    // appended to the synthetic root one at a time as they finish. The root's
+    // children Vec is pre-reserved to the drive count so these pushes never
+    // reallocate — keeping the raw child pointers the tree items hold valid.
+    scan_all_active: bool,
+    drives_expected: usize,
+    drives_done: usize,
+    scan_all_first_err: Option<String>,
+    drive_inbox: Arc<Mutex<Vec<Result<FolderNode, String>>>>,
+    // At-most-one-in-flight guard for WM_APP_PROGRESS so a fast scanner can't
+    // flood the message queue and stall the UI.
+    progress_pending: Arc<AtomicBool>,
+
+    // Recycling: folders/files are removed from the in-memory tree in place
+    // (rather than triggering a full rescan) and the shell delete runs on a
+    // background thread. `deleted_nodes` holds the raw pointers of every folder
+    // that's been tombstoned — the nodes stay allocated (so all the other raw
+    // pointers stay valid) but are skipped by every view. `recycle_result`
+    // carries the background op's success flag back for a failure fallback.
+    deleted_nodes: HashSet<isize>,
+    recycle_result: Arc<Mutex<Option<bool>>>,
 }
 
 #[derive(Copy, Clone)]
@@ -387,6 +421,14 @@ pub fn run() {
             treemap_entries: Vec::new(),
             treemap_selected: -1,
             treemap_hover: -1,
+            scan_all_active: false,
+            drives_expected: 0,
+            drives_done: 0,
+            scan_all_first_err: None,
+            drive_inbox: Arc::new(Mutex::new(Vec::new())),
+            progress_pending: Arc::new(AtomicBool::new(false)),
+            deleted_nodes: HashSet::new(),
+            recycle_result: Arc::new(Mutex::new(None)),
         });
         let app_ptr = Box::into_raw(app);
 
@@ -519,6 +561,14 @@ unsafe extern "system" fn wnd_proc(
         }
         m if m == WM_APP_DONE => {
             on_scan_done(app);
+            LRESULT(0)
+        }
+        m if m == WM_APP_DRIVE_DONE => {
+            on_drive_done(app);
+            LRESULT(0)
+        }
+        m if m == WM_APP_RECYCLE_DONE => {
+            on_recycle_done(hwnd, app);
             LRESULT(0)
         }
         m if m == WM_APP_TEMP_DONE => {
@@ -1369,6 +1419,8 @@ unsafe fn begin_scan_ui(app: &mut AppState, status_text: &str) {
     app.treemap_selected = -1;
     app.treemap_hover = -1;
     app.side_hits.clear();
+    // A fresh scan supersedes any in-place deletions.
+    app.deleted_nodes.clear();
     if app.side_view == SideView::TopFiles || app.side_view == SideView::OldestFiles {
         SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     }
@@ -1383,14 +1435,25 @@ unsafe fn begin_scan_ui(app: &mut AppState, status_text: &str) {
     }
 }
 
-// Progress callback shared by all drive scans.
-fn make_progress(send_hwnd: SendHwnd, shared: Arc<Mutex<ScanState>>) -> ProgressFn {
+// Progress callback shared by all drive scans. Posts WM_APP_PROGRESS only when
+// none is already queued (coalesced via `pending`), so a fast scanner — or
+// several parallel ones — can't outrun the UI thread and stall it.
+fn make_progress(
+    send_hwnd: SendHwnd,
+    shared: Arc<Mutex<ScanState>>,
+    pending: Arc<AtomicBool>,
+) -> ProgressFn {
     Box::new(move |p| {
         if let Ok(mut s) = shared.lock() {
             s.last_progress = p.clone();
         }
-        unsafe {
-            let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_PROGRESS, WPARAM(0), LPARAM(0));
+        if pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            unsafe {
+                let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_PROGRESS, WPARAM(0), LPARAM(0));
+            }
         }
     })
 }
@@ -1431,7 +1494,7 @@ unsafe fn start_scan(hwnd: HWND, app: &mut AppState, path: String, use_mft: bool
     let send_hwnd = SendHwnd(hwnd.0 as isize);
     let shared = app.shared.clone();
     let cancel = app.cancel.clone();
-    let progress = make_progress(send_hwnd, shared.clone());
+    let progress = make_progress(send_hwnd, shared.clone(), app.progress_pending.clone());
 
     std::thread::spawn(move || {
         let result = scan_one(&path, use_mft, cancel, progress);
@@ -1444,70 +1507,189 @@ unsafe fn start_scan(hwnd: HWND, app: &mut AppState, path: String, use_mft: bool
     });
 }
 
-// Scans every enumerated drive sequentially and composes the results under a
-// synthetic "All drives" root. Drives that fail (ejected, access denied) are
-// skipped; the scan only errors if *no* drive produced a result.
+// Scans every enumerated drive on its own worker thread (volumes are
+// independent, so this is safe and roughly as fast as the slowest single
+// drive) and appends each into a synthetic "All drives" root as it finishes.
+// The tree/list update per drive, so results appear progressively and in
+// alphabetical order; the root is auto-expanded. Drives that fail are skipped.
 unsafe fn start_scan_all(hwnd: HWND, app: &mut AppState) {
-    let targets: Vec<(String, bool)> = app
+    // Sort targets alphabetically by drive letter.
+    let mut targets: Vec<(String, bool)> = app
         .drives
         .iter()
         .map(|d| (d.root.clone(), d.is_ntfs && app.is_admin))
         .collect();
+    targets.sort_by(|a, b| a.0.cmp(&b.0));
     if targets.is_empty() {
         return;
     }
-    begin_scan_ui(
-        app,
-        &format!("Scanning all drives ({} volumes)...", targets.len()),
-    );
+    let n = targets.len();
+    begin_scan_ui(app, &format!("Scanning {n} drives..."));
     app.last_scan = Some(ScanRequest::AllDrives);
 
-    let send_hwnd = SendHwnd(hwnd.0 as isize);
-    let shared = app.shared.clone();
-    let cancel = app.cancel.clone();
-    let progress_shared = shared.clone();
+    // Create the synthetic root now, with capacity reserved for every drive so
+    // the incremental pushes in on_drive_done never reallocate the Vec (which
+    // would dangle the raw child pointers the tree items hold).
+    let mut root = FolderNode {
+        full_path: String::new(), // synthetic — shell actions no-op on it
+        name: "All drives".to_string(),
+        ..Default::default()
+    };
+    root.children = Vec::with_capacity(n);
+    app.root_node = Some(Box::new(root));
+    let root_ptr = app.root_node.as_deref().unwrap() as *const FolderNode;
+    let hti = insert_tree_item(app.tree, 0, &*root_ptr, false);
+    // Root is inserted while its children Vec is still empty, so the tree would
+    // treat it as a leaf; force the has-children flag so drives appended later
+    // show under an expandable node.
+    set_tree_item_has_children(app.tree, hti);
+    app.item_by_node.insert(root_ptr as isize, hti);
+    app.populated.insert(hti); // drives are appended by hand, not lazily
+    app.selected_node = root_ptr as isize;
+    SendMessageW(
+        app.tree,
+        TVM_SELECTITEM,
+        WPARAM(TVGN_CARET as usize),
+        LPARAM(hti),
+    );
 
-    std::thread::spawn(move || {
-        let mut root = FolderNode {
-            full_path: String::new(), // synthetic — shell actions no-op on it
-            name: "All drives".to_string(),
-            ..Default::default()
-        };
-        let mut first_err: Option<String> = None;
-        for (path, use_mft) in &targets {
-            if cancel.load(Ordering::SeqCst) {
-                break;
+    app.scan_all_active = true;
+    app.drives_expected = n;
+    app.drives_done = 0;
+    app.scan_all_first_err = None;
+    let inbox = Arc::new(Mutex::new(Vec::new()));
+    app.drive_inbox = inbox.clone();
+
+    let send_hwnd = SendHwnd(hwnd.0 as isize);
+    for (path, use_mft) in targets {
+        let inbox = inbox.clone();
+        let cancel = app.cancel.clone();
+        let progress = make_progress(send_hwnd, app.shared.clone(), app.progress_pending.clone());
+        std::thread::spawn(move || {
+            let res =
+                scan_one(&path, use_mft, cancel, progress).map_err(|e| format!("{path}: {e}"));
+            if let Ok(mut q) = inbox.lock() {
+                q.push(res);
             }
-            let progress = make_progress(send_hwnd, progress_shared.clone());
-            match scan_one(path, *use_mft, cancel.clone(), progress) {
-                Ok(node) => {
-                    root.size += node.size;
-                    root.file_count += node.file_count;
-                    root.folder_count += node.folder_count + 1;
-                    root.children.push(node);
-                }
-                Err(e) => {
-                    if first_err.is_none() {
-                        first_err = Some(format!("{path}: {e}"));
-                    }
+            unsafe {
+                let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_DRIVE_DONE, WPARAM(0), LPARAM(0));
+            }
+        });
+    }
+}
+
+// One or more drives finished: drain the inbox, append each into the root, and
+// refresh the visible views. Runs on the UI thread.
+unsafe fn on_drive_done(app: &mut AppState) {
+    if !app.scan_all_active {
+        return;
+    }
+    let drained: Vec<Result<FolderNode, String>> = {
+        let mut q = app.drive_inbox.lock().unwrap();
+        std::mem::take(&mut *q)
+    };
+    for res in drained {
+        app.drives_done += 1;
+        match res {
+            Ok(node) => append_drive(app, node),
+            Err(e) => {
+                if app.scan_all_first_err.is_none() {
+                    app.scan_all_first_err = Some(e);
                 }
             }
         }
-        let result = if root.children.is_empty() {
-            Err(first_err.unwrap_or_else(|| "no drives scanned".to_string()))
-        } else {
-            Ok(root)
-        };
-        if let Ok(mut s) = shared.lock() {
-            s.result = Some(result);
-        }
-        unsafe {
-            let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_DONE, WPARAM(0), LPARAM(0));
-        }
-    });
+    }
+
+    if app.drives_done >= app.drives_expected {
+        finish_scan_all(app);
+    } else if let Some(root) = app.root_node.as_deref() {
+        set_status(
+            app.status,
+            &format!(
+                "Scanned {}/{} drives — {} ({} files) so far...",
+                app.drives_done,
+                app.drives_expected,
+                format_bytes(root.size),
+                format_count(root.file_count),
+            ),
+        );
+    }
+}
+
+// Pushes a finished drive into the root and inserts its (alphabetically
+// sorted) tree item, keeping the root expanded so drives stay visible.
+unsafe fn append_drive(app: &mut AppState, node: FolderNode) {
+    let root_ptr = match app.root_node.as_deref() {
+        Some(r) => r as *const FolderNode,
+        None => return,
+    };
+    let root = app.root_node.as_deref_mut().unwrap();
+    root.size += node.size;
+    root.file_count += node.file_count;
+    root.folder_count += node.folder_count + 1;
+    root.children.push(node); // capacity reserved in start_scan_all — no realloc
+    let drive_ptr = root.children.last().unwrap() as *const FolderNode;
+
+    if let Some(&root_hti) = app.item_by_node.get(&(root_ptr as isize)) {
+        let hti = insert_tree_item(app.tree, root_hti, &*drive_ptr, true);
+        app.item_by_node.insert(drive_ptr as isize, hti);
+        SendMessageW(
+            app.tree,
+            TVM_EXPAND,
+            WPARAM(TVE_EXPAND.0 as usize),
+            LPARAM(root_hti),
+        );
+    }
+    // Keep the main list (showing the root's drives) current if root is selected.
+    if app.selected_node == root_ptr as isize {
+        populate_list_folders(app, &*root_ptr);
+    }
+}
+
+// Final housekeeping once every drive thread has reported.
+unsafe fn finish_scan_all(app: &mut AppState) {
+    app.scan_all_active = false;
+    app.scanning = false;
+    let _ = EnableWindow(app.stop_btn, false);
+    let _ = EnableWindow(app.scan_all_btn, true);
+    for b in &app.drive_buttons {
+        let _ = EnableWindow(*b, true);
+    }
+    // The global side views were empty during the scan; populate them now.
+    match app.side_view {
+        SideView::None | SideView::TempFiles => {}
+        SideView::TopFiles => populate_side_top_files(app),
+        SideView::OldestFiles => populate_side_oldest_files(app),
+        SideView::Treemap => rebuild_treemap(app),
+    }
+
+    let root = match app.root_node.as_deref() {
+        Some(r) => r,
+        None => return,
+    };
+    if root.children.is_empty() {
+        let msg = app
+            .scan_all_first_err
+            .clone()
+            .unwrap_or_else(|| "no drives scanned".to_string());
+        set_status(app.status, &format!("Scan failed: {msg}"));
+        return;
+    }
+    let mut summary = format!(
+        "All drives — {} ({} files, {} folders)",
+        format_bytes(root.size),
+        format_count(root.file_count),
+        format_count(root.folder_count),
+    );
+    if let Some(err) = &app.scan_all_first_err {
+        summary.push_str(&format!("  [some skipped: {err}]"));
+    }
+    set_status(app.status, &summary);
 }
 
 fn on_progress(app: &AppState) {
+    // Allow the next progress post through now that we're servicing this one.
+    app.progress_pending.store(false, Ordering::Release);
     let p = {
         let s = app.shared.lock().unwrap();
         s.last_progress.clone()
@@ -1569,7 +1751,7 @@ unsafe fn on_scan_done(app: &mut AppState) {
         .unwrap_or(std::ptr::null());
     if !root_ptr.is_null() {
         let root: &FolderNode = &*root_ptr;
-        let hti = insert_tree_item(app.tree, 0, root);
+        let hti = insert_tree_item(app.tree, 0, root, false);
         app.item_by_node.insert(root_ptr as isize, hti);
         populate_children(app, hti, root);
         SendMessageW(
@@ -1601,13 +1783,18 @@ unsafe fn populate_children(app: &mut AppState, parent_hti: isize, parent: &Fold
     for c in kids {
         // Only insert subdirectories as tree items; leaf-like nodes (no children)
         // still appear because every FolderNode here is a directory.
-        let hti = insert_tree_item(app.tree, parent_hti, c);
+        let hti = insert_tree_item(app.tree, parent_hti, c, false);
         let p = c as *const _ as isize;
         app.item_by_node.insert(p, hti);
     }
 }
 
-unsafe fn insert_tree_item(tree: HWND, parent_hti: isize, node: &FolderNode) -> isize {
+unsafe fn insert_tree_item(
+    tree: HWND,
+    parent_hti: isize,
+    node: &FolderNode,
+    sorted: bool,
+) -> isize {
     let mut name_w: Vec<u16> = node.name.encode_utf16().chain(std::iter::once(0)).collect();
     let has_children = if node.children.is_empty() { 0 } else { 1 };
     let item = TVITEMW {
@@ -1618,11 +1805,17 @@ unsafe fn insert_tree_item(tree: HWND, parent_hti: isize, node: &FolderNode) -> 
         lParam: LPARAM(node as *const _ as isize),
         ..Default::default()
     };
+    // `sorted` inserts the item in alphabetical position among its siblings
+    // (TVI_SORT); otherwise it's appended (TVI_LAST) and the caller controls
+    // order via pre-sorting.
+    let after = if sorted {
+        windows::Win32::UI::Controls::TVI_SORT.0
+    } else {
+        windows::Win32::UI::Controls::TVI_LAST.0
+    };
     let ins = windows::Win32::UI::Controls::TVINSERTSTRUCTW {
         hParent: windows::Win32::UI::Controls::HTREEITEM(parent_hti as _),
-        hInsertAfter: windows::Win32::UI::Controls::HTREEITEM(
-            windows::Win32::UI::Controls::TVI_LAST.0 as _,
-        ),
+        hInsertAfter: windows::Win32::UI::Controls::HTREEITEM(after as _),
         Anonymous: windows::Win32::UI::Controls::TVINSERTSTRUCTW_0 { item },
     };
     let r = SendMessageW(
@@ -1632,6 +1825,23 @@ unsafe fn insert_tree_item(tree: HWND, parent_hti: isize, node: &FolderNode) -> 
         LPARAM(&ins as *const _ as isize),
     );
     r.0 as isize
+}
+
+// Force a tree item to display as having children (an expand button), used
+// for the "All drives" root which is created before any drive is appended.
+unsafe fn set_tree_item_has_children(tree: HWND, hti: isize) {
+    let item = TVITEMW {
+        mask: TVIF_HANDLE | TVIF_CHILDREN,
+        hItem: windows::Win32::UI::Controls::HTREEITEM(hti as _),
+        cChildren: windows::Win32::UI::Controls::TVITEMEXW_CHILDREN(1),
+        ..Default::default()
+    };
+    SendMessageW(
+        tree,
+        TVM_SETITEMW,
+        WPARAM(0),
+        LPARAM(&item as *const _ as isize),
+    );
 }
 
 unsafe fn on_tree_expand(app: &mut AppState, hti: isize) {
@@ -1673,8 +1883,18 @@ unsafe fn on_tree_select(app: &mut AppState) {
 
 unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
-    let mut kids: Vec<&FolderNode> = node.children.iter().collect();
-    kids.sort_by_key(|n| std::cmp::Reverse(n.size));
+    let mut kids: Vec<&FolderNode> = node
+        .children
+        .iter()
+        .filter(|c| !app.deleted_nodes.contains(&(*c as *const _ as isize)))
+        .collect();
+    // The synthetic "All drives" root (empty path) lists its drives
+    // alphabetically; every real folder lists children biggest-first.
+    if node.full_path.is_empty() {
+        kids.sort_by(|a, b| a.name.cmp(&b.name));
+    } else {
+        kids.sort_by_key(|n| std::cmp::Reverse(n.size));
+    }
     for (i, k) in kids.iter().enumerate() {
         insert_row_with_param(
             app.list,
@@ -1824,57 +2044,268 @@ unsafe fn rescan_after_recycle(hwnd: HWND, app: &mut AppState) {
 unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget) {
     match target {
         CtxTarget::Treemap => {
-            if let Some(path) = treemap_selected_path(app) {
-                if !path.is_empty() {
-                    recycle(&path);
-                    rescan_after_recycle(hwnd, app);
+            if let Some((folder, file)) = treemap_selected_ptrs(app) {
+                let folder_ref: &FolderNode = &*folder;
+                if file.is_null() {
+                    // Folder tile.
+                    if !folder_ref.full_path.is_empty() {
+                        recycle_in_background(hwnd, app, vec![folder_ref.full_path.clone()]);
+                        delete_folder_node(app, folder);
+                    }
+                } else {
+                    // File tile.
+                    let file_ref: &FileEntry = &*file;
+                    let path = join_path(&folder_ref.full_path, &file_ref.name);
+                    recycle_in_background(hwnd, app, vec![path]);
+                    adjust_ancestors(app, folder, file_ref.size, 1, 0, true);
+                    app.treemap_selected = -1;
+                    refresh_after_delete(app);
                 }
             }
         }
         CtxTarget::SideList => {
-            // Multi-select recycle for all file-based side views.
             let indices = selected_indices(app.side_list);
-            let paths: Vec<String> = indices
-                .iter()
-                .filter_map(|&i| side_row_path(app, i))
-                .collect();
+            if indices.is_empty() {
+                return;
+            }
+            let mut paths: Vec<String> = Vec::new();
+            // For file-ranking views, decrement the owning folders' totals.
+            if app.side_view == SideView::TopFiles || app.side_view == SideView::OldestFiles {
+                for &i in &indices {
+                    let lp = list_item_lparam(app.side_list, i);
+                    if let Some(&(folder, file)) = app.side_hits.get(lp as usize) {
+                        let folder_ref: &FolderNode = &*folder;
+                        let file_ref: &FileEntry = &*file;
+                        paths.push(join_path(&folder_ref.full_path, &file_ref.name));
+                        adjust_ancestors(app, folder, file_ref.size, 1, 0, true);
+                    }
+                }
+            } else {
+                for &i in &indices {
+                    if let Some(p) = side_row_path(app, i) {
+                        paths.push(p);
+                    }
+                }
+            }
             if paths.is_empty() {
                 return;
             }
-            let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-            recycle_many(&path_refs);
-            if app.side_view == SideView::TempFiles {
-                if !app.scanning {
-                    start_temp_scan(hwnd, app);
-                }
-            } else {
-                rescan_after_recycle(hwnd, app);
-            }
+            recycle_in_background(hwnd, app, paths);
+            remove_side_rows(app.side_list, &indices);
+            refresh_after_delete(app);
         }
         CtxTarget::MainList => {
             if let Some(node) = selected_list_node(app) {
                 if !node.full_path.is_empty() {
-                    recycle(&node.full_path);
-                    rescan_after_recycle(hwnd, app);
+                    let node_ptr = node as *const FolderNode;
+                    recycle_in_background(hwnd, app, vec![node.full_path.clone()]);
+                    delete_folder_node(app, node_ptr);
                 }
             }
         }
     }
 }
 
-// "Recycle all" panel button: every temp entry in one undoable shell op.
+// "Recycle all" panel button: every temp entry in one undoable shell op, in
+// the background; the list clears immediately.
 unsafe fn recycle_all_temp(hwnd: HWND, app: &mut AppState) {
     if app.side_view != SideView::TempFiles || app.temp_entries.is_empty() {
         return;
     }
-    let paths: Vec<&str> = app
+    let paths: Vec<String> = app
         .temp_entries
         .iter()
-        .map(|e| e.full_path.as_str())
+        .map(|e| e.full_path.clone())
         .collect();
-    recycle_many(&paths);
-    if !app.scanning {
-        start_temp_scan(hwnd, app);
+    recycle_in_background(hwnd, app, paths);
+    app.temp_entries.clear();
+    SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+    set_status(app.status, "Recycling temp files in the background...");
+}
+
+// Runs the shell delete on a worker thread so the UI never blocks on it; the
+// in-memory tree/views are updated optimistically by the caller. Reports back
+// via WM_APP_RECYCLE_DONE (used only for the failure fallback).
+unsafe fn recycle_in_background(hwnd: HWND, app: &AppState, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    {
+        *app.recycle_result.lock().unwrap() = None;
+    }
+    let send = SendHwnd(hwnd.0 as isize);
+    let result = app.recycle_result.clone();
+    std::thread::spawn(move || {
+        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let ok = recycle_many(&refs);
+        *result.lock().unwrap() = Some(ok);
+        unsafe {
+            let _ = PostMessageW(send.to_hwnd(), WM_APP_RECYCLE_DONE, WPARAM(0), LPARAM(0));
+        }
+    });
+}
+
+// A background recycle finished. On success we've already updated the views;
+// on failure, fall back to a full rescan so the display resyncs with disk.
+unsafe fn on_recycle_done(hwnd: HWND, app: &mut AppState) {
+    let ok = app.recycle_result.lock().unwrap().take();
+    if ok == Some(false) {
+        set_status(app.status, "Recycle failed — rescanning to resync.");
+        rescan_after_recycle(hwnd, app);
+    }
+}
+
+// Tombstones a folder subtree and removes it from the tree control, then
+// updates ancestors and the visible views — no rescan.
+unsafe fn delete_folder_node(app: &mut AppState, node_ptr: *const FolderNode) {
+    let node = &*node_ptr;
+    let (dsize, dfiles, dfolders) = (node.size, node.file_count, node.folder_count + 1);
+
+    // Decrement every ancestor (not the node itself — it's going away).
+    adjust_ancestors(app, node_ptr, dsize, dfiles, dfolders, false);
+
+    // Tombstone the whole subtree so every view skips it, and drop its tree
+    // bookkeeping (its tree items get removed below).
+    mark_subtree_deleted(app, node);
+
+    // Remove the node's tree item (and, with it, its descendants), selecting
+    // the parent so the caret stays valid.
+    if let Some(&hti) = app.item_by_node.get(&(node_ptr as isize)) {
+        let parent = SendMessageW(
+            app.tree,
+            TVM_GETNEXTITEM,
+            WPARAM(TVGN_PARENT as usize),
+            LPARAM(hti),
+        );
+        SendMessageW(app.tree, TVM_DELETEITEM, WPARAM(0), LPARAM(hti));
+        app.item_by_node.remove(&(node_ptr as isize));
+        if parent.0 != 0 {
+            SendMessageW(
+                app.tree,
+                TVM_SELECTITEM,
+                WPARAM(TVGN_CARET as usize),
+                LPARAM(parent.0),
+            );
+        }
+    }
+    refresh_after_delete(app);
+}
+
+// Adds every folder pointer in `node`'s subtree to `deleted_nodes` (so file
+// queries and the treemap skip anything under it) and drops their tree
+// bookkeeping. Iterative to avoid deep recursion on deep trees.
+unsafe fn mark_subtree_deleted(app: &mut AppState, node: &FolderNode) {
+    let mut ptrs: Vec<*const FolderNode> = Vec::new();
+    collect_folder_ptrs(node, &mut ptrs);
+    for p in ptrs {
+        app.deleted_nodes.insert(p as isize);
+        app.item_by_node.remove(&(p as isize));
+    }
+}
+
+// Subtracts a deleted item's contribution from its ancestor folders' running
+// totals. `include_self` decrements the leaf folder too (for a file delete,
+// where the leaf is the containing folder that survives).
+unsafe fn adjust_ancestors(
+    app: &mut AppState,
+    leaf_ptr: *const FolderNode,
+    dsize: i64,
+    dfiles: i64,
+    dfolders: i64,
+    include_self: bool,
+) {
+    let root = match app.root_node.as_deref() {
+        Some(r) => r,
+        None => return,
+    };
+    subtract_along_ancestors(root, leaf_ptr, (dsize, dfiles, dfolders), include_self);
+}
+
+// Subtracts a deleted item's (size, files, folders) from every folder on the
+// path root..=target. `include_self` also decrements the target folder (for a
+// file delete, where the target is the surviving container). Pure over the
+// in-memory tree — no Win32 — so it's unit-tested.
+unsafe fn subtract_along_ancestors(
+    root: &FolderNode,
+    target: *const FolderNode,
+    d: (i64, i64, i64),
+    include_self: bool,
+) {
+    let mut path: Vec<*const FolderNode> = Vec::new();
+    if !find_node_path(root, target, &mut path) {
+        return;
+    }
+    let upto = if include_self {
+        path.len()
+    } else {
+        path.len().saturating_sub(1)
+    };
+    for &anc in &path[..upto] {
+        let a = anc as *mut FolderNode;
+        (*a).size -= d.0;
+        (*a).file_count -= d.1;
+        (*a).folder_count -= d.2;
+    }
+}
+
+// Collects the pointers of `node` and every folder beneath it (iterative).
+fn collect_folder_ptrs(node: &FolderNode, out: &mut Vec<*const FolderNode>) {
+    let mut stack: Vec<*const FolderNode> = vec![node as *const _];
+    while let Some(p) = stack.pop() {
+        out.push(p);
+        // SAFETY: pointers come from the borrowed tree and outlive this call.
+        let f = unsafe { &*p };
+        for c in &f.children {
+            stack.push(c as *const _);
+        }
+    }
+}
+
+// Deletes the given (ascending) listview row indices, bottom-up so the
+// remaining indices stay valid.
+unsafe fn remove_side_rows(list: HWND, indices: &[i32]) {
+    for &i in indices.iter().rev() {
+        SendMessageW(list, LVM_DELETEITEM, WPARAM(i as usize), LPARAM(0));
+    }
+}
+
+// Repaints the views after an in-place deletion, using the tree's current
+// selection. No disk access.
+unsafe fn refresh_after_delete(app: &mut AppState) {
+    let hti = SendMessageW(
+        app.tree,
+        TVM_GETNEXTITEM,
+        WPARAM(TVGN_CARET as usize),
+        LPARAM(0),
+    )
+    .0 as isize;
+    if hti != 0 {
+        let lp = tree_item_lparam(app.tree, hti);
+        if lp != 0 {
+            app.selected_node = lp;
+            populate_list_folders(app, &*(lp as *const FolderNode));
+            let summary = {
+                let n = &*(lp as *const FolderNode);
+                format!(
+                    "{} — {} ({} files, {} folders)",
+                    if n.full_path.is_empty() {
+                        "All drives"
+                    } else {
+                        &n.name
+                    },
+                    format_bytes(n.size),
+                    format_count(n.file_count),
+                    format_count(n.folder_count),
+                )
+            };
+            set_status(app.status, &summary);
+        }
+    }
+    match app.side_view {
+        SideView::Treemap => rebuild_treemap(app),
+        SideView::TopFiles => populate_side_top_files(app),
+        SideView::OldestFiles => populate_side_oldest_files(app),
+        SideView::None | SideView::TempFiles => {}
     }
 }
 
@@ -1890,23 +2321,30 @@ where
     };
     let root: &FolderNode = &*root_ptr;
     let hits = query(root);
-    for (i, h) in hits.iter().enumerate() {
+    let mut row = 0i32;
+    for h in hits.iter() {
+        // Skip files under a folder that's been recycled in place.
+        if app.deleted_nodes.contains(&(h.folder as *const _ as isize)) {
+            continue;
+        }
         let full_path = join_path(&h.folder.full_path, &h.file.name);
         // lParam is the index into side_hits so context actions can recover
         // the (folder, file) pair.
+        let idx = app.side_hits.len() as isize;
         app.side_hits
             .push((h.folder as *const _, h.file as *const _));
         insert_row_with_param(
             app.side_list,
-            i as i32,
+            row,
             &h.file.name,
             &[
                 format_bytes(h.file.size),
                 format_filetime(h.file.last_modified_ft),
                 full_path,
             ],
-            i as isize,
+            idx,
         );
+        row += 1;
     }
 }
 
@@ -1981,6 +2419,13 @@ unsafe fn apply_side_view(hwnd: HWND, app: &mut AppState, view: SideView) {
     } else {
         let _ = ShowWindow(app.panel, if visible { SW_SHOW } else { SW_HIDE });
         layout(hwnd, app);
+    }
+    // Reposition the header buttons/content for the new view: `layout` above
+    // only sends the panel a WM_SIZE when its size actually changes, so on a
+    // same-size view switch the just-shown Recycle-all button would otherwise
+    // stay at its (0,0) creation spot, on top of the title.
+    if visible {
+        panel_layout(app, app.panel);
     }
     let _ = InvalidateRect(app.panel, None, true);
 
@@ -2070,21 +2515,49 @@ unsafe fn toggle_detach(hwnd: HWND, app: &mut AppState) {
 }
 
 // Positions the panel header (title strip + buttons) and the content view.
+// X of the leftmost header button for a given panel width — the title clamps
+// to its left. Buttons pin to the right edge, so this stays valid at any width.
+fn header_buttons_left_x(app: &AppState, panel_w: i32) -> i32 {
+    let detach_x = panel_w - PANEL_BTN_GAP - DETACH_BTN_W;
+    if app.side_view == SideView::TempFiles {
+        detach_x - PANEL_BTN_GAP - RECYCLE_BTN_W
+    } else {
+        detach_x
+    }
+}
+
 unsafe fn panel_layout(app: &AppState, panel: HWND) {
     let mut rc = RECT::default();
     let _ = GetClientRect(panel, &mut rc);
     let w = rc.right - rc.left;
     let h = rc.bottom - rc.top;
-    let btn_y = (PANEL_HEADER_H - 24) / 2;
-    let mut x = w - 75;
-    let _ = MoveWindow(app.btn_detach, x, btn_y, 70, 24, true);
+    let btn_y = (PANEL_HEADER_H - PANEL_BTN_H) / 2;
+    // Detach is rightmost; Recycle-all (temp view only) sits to its left.
+    let detach_x = w - PANEL_BTN_GAP - DETACH_BTN_W;
+    let _ = MoveWindow(
+        app.btn_detach,
+        detach_x,
+        btn_y,
+        DETACH_BTN_W,
+        PANEL_BTN_H,
+        true,
+    );
     if app.side_view == SideView::TempFiles {
-        x -= 95;
-        let _ = MoveWindow(app.btn_recycle_all, x, btn_y, 90, 24, true);
+        let recycle_x = detach_x - PANEL_BTN_GAP - RECYCLE_BTN_W;
+        let _ = MoveWindow(
+            app.btn_recycle_all,
+            recycle_x,
+            btn_y,
+            RECYCLE_BTN_W,
+            PANEL_BTN_H,
+            true,
+        );
     }
     let content_h = (h - PANEL_HEADER_H).max(0);
     let _ = MoveWindow(app.side_list, 0, PANEL_HEADER_H, w, content_h, true);
     let _ = MoveWindow(app.treemap, 0, PANEL_HEADER_H, w, content_h, true);
+    // Buttons moved — repaint the header so the title re-clamps.
+    let _ = InvalidateRect(panel, None, false);
 }
 
 unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
@@ -2107,10 +2580,13 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
 
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(fg));
+    // Clamp the title to the left of the leftmost button so they never overlap,
+    // whatever the panel width or which buttons are shown.
+    let title_right = (header_buttons_left_x(app, rc.right) - PANEL_BTN_GAP).max(8);
     let mut text_rc = RECT {
         left: 8,
         top: 0,
-        right: (rc.right - 180).max(8),
+        right: title_right,
         bottom: PANEL_HEADER_H,
     };
     let mut title_w: Vec<u16> = app.side_view.title().encode_utf16().collect();
@@ -2214,19 +2690,28 @@ unsafe fn rebuild_treemap(app: &mut AppState) {
         w: (rc.right - rc.left) as f64,
         h: (rc.bottom - rc.top) as f64,
     };
-    build_treemap_level(&mut app.treemap_entries, &*root_ptr, bounds, 0, None);
+    build_treemap_level(
+        &mut app.treemap_entries,
+        &*root_ptr,
+        bounds,
+        0,
+        None,
+        &app.deleted_nodes,
+    );
     let _ = InvalidateRect(app.treemap, None, true);
 }
 
 // Emits tiles for one folder's contents (subfolders + direct files) into
 // `bounds`, then recurses into each subfolder tile. `hue` is None only at the
-// top level, where each item founds its own color family.
+// top level, where each item founds its own color family. Folders tombstoned
+// by an in-place recycle (in `deleted`) are skipped.
 fn build_treemap_level(
     entries: &mut Vec<TreemapEntry>,
     folder: &FolderNode,
     bounds: Rectf,
     depth: u32,
     hue: Option<usize>,
+    deleted: &HashSet<isize>,
 ) {
     if depth > TREEMAP_MAX_DEPTH || bounds.w < TREEMAP_MIN_PX || bounds.h < TREEMAP_MIN_PX {
         return;
@@ -2238,6 +2723,7 @@ fn build_treemap_level(
     let mut items: Vec<(i64, Item)> = folder
         .children
         .iter()
+        .filter(|c| !deleted.contains(&(*c as *const _ as isize)))
         .map(|c| (c.size, Item::Folder(c)))
         .chain(folder.files.iter().map(|f| (f.size, Item::File(f))))
         .collect();
@@ -2282,7 +2768,7 @@ fn build_treemap_level(
                     w: r.w - 2.0,
                     h: r.h - 2.0 - header_h as f64,
                 };
-                build_treemap_level(entries, c, inner, depth + 1, Some(hue_idx));
+                build_treemap_level(entries, c, inner, depth + 1, Some(hue_idx), deleted);
                 // A leaf if no child tiles were emitted below it.
                 entries[idx].is_leaf = entries.len() == idx + 1;
             }
@@ -3371,16 +3857,13 @@ fn open_cmd_at(path: &str) {
     }
 }
 
-fn recycle(path: &str) {
-    recycle_many(&[path]);
-}
-
 // Bulk recycle via SHFileOperationW. pFrom is a double-null-terminated list
 // of single-null-terminated wide paths — one syscall regardless of count, so
-// the user sees one undoable operation in the Recycle Bin.
-fn recycle_many(paths: &[&str]) {
+// the user sees one undoable operation in the Recycle Bin. Returns whether the
+// operation succeeded without being aborted.
+fn recycle_many(paths: &[&str]) -> bool {
     if paths.is_empty() {
-        return;
+        return true;
     }
     unsafe {
         let mut buf: Vec<u16> = Vec::new();
@@ -3399,7 +3882,8 @@ fn recycle_many(paths: &[&str]) {
             hNameMappings: std::ptr::null_mut(),
             lpszProgressTitle: PCWSTR::null(),
         };
-        let _ = SHFileOperationW(&mut op);
+        let rc = SHFileOperationW(&mut op);
+        rc == 0 && !op.fAnyOperationsAborted.as_bool()
     }
 }
 
@@ -3606,7 +4090,11 @@ fn format_count(n: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{rel_luminance, tile_color, PALETTE_HUES};
+    use super::{
+        collect_folder_ptrs, find_node_path, rel_luminance, subtract_along_ancestors, tile_color,
+        PALETTE_HUES,
+    };
+    use crate::types::{FileEntry, FolderNode};
 
     fn contrast(a: u32, b: u32) -> f64 {
         let (la, lb) = (rel_luminance(a), rel_luminance(b));
@@ -3629,5 +4117,106 @@ mod tests {
                 );
             }
         }
+    }
+
+    // Builds root{ a{ a1{} }, b{} } with known sizes/counts.
+    fn sample_tree() -> FolderNode {
+        let file = |sz: i64| FileEntry {
+            name: "f".into(),
+            size: sz,
+            last_modified_ft: 0,
+        };
+        let mut a1 = FolderNode {
+            name: "a1".into(),
+            full_path: r"C:\a\a1".into(),
+            size: 30,
+            file_count: 3,
+            folder_count: 0,
+            files: vec![file(10), file(10), file(10)],
+            ..Default::default()
+        };
+        a1.direct_file_count = 3;
+        let a = FolderNode {
+            name: "a".into(),
+            full_path: r"C:\a".into(),
+            size: 30,
+            file_count: 3,
+            folder_count: 1, // a1
+            children: vec![a1],
+            ..Default::default()
+        };
+        let b = FolderNode {
+            name: "b".into(),
+            full_path: r"C:\b".into(),
+            size: 5,
+            file_count: 1,
+            folder_count: 0,
+            files: vec![file(5)],
+            direct_file_count: 1,
+            ..Default::default()
+        };
+        FolderNode {
+            name: r"C:\".into(),
+            full_path: r"C:\".into(),
+            size: 35,
+            file_count: 4,
+            folder_count: 2, // a, b (a1 is under a)
+            children: vec![a, b],
+            ..Default::default()
+        }
+    }
+
+    // Deleting folder `a` (size 30, 3 files, 2 folders incl. itself) must
+    // subtract exactly that from the root, leaving b's contribution.
+    #[test]
+    fn delete_folder_updates_ancestor_totals() {
+        let root = sample_tree();
+        let a_ptr = &root.children[0] as *const FolderNode;
+        // a contributes: size 30, files 3, folders (a.folder_count + 1) = 2.
+        unsafe { subtract_along_ancestors(&root, a_ptr, (30, 3, 2), false) };
+        assert_eq!(root.size, 5, "root size after deleting a");
+        assert_eq!(root.file_count, 1, "root files after deleting a");
+        assert_eq!(root.folder_count, 0, "root folders after deleting a");
+        // a itself is untouched (it's tombstoned, not mutated).
+        assert_eq!(root.children[0].size, 30);
+    }
+
+    // Deleting a file decrements the containing folder and every ancestor.
+    #[test]
+    fn delete_file_updates_folder_and_ancestors() {
+        let root = sample_tree();
+        let a1_ptr = &root.children[0].children[0] as *const FolderNode;
+        // Remove one 10-byte file from a1: size 10, 1 file, 0 folders, self too.
+        unsafe { subtract_along_ancestors(&root, a1_ptr, (10, 1, 0), true) };
+        assert_eq!(root.children[0].children[0].size, 20); // a1
+        assert_eq!(root.children[0].children[0].file_count, 2);
+        assert_eq!(root.children[0].size, 20); // a
+        assert_eq!(root.size, 25); // root
+        assert_eq!(root.file_count, 3);
+    }
+
+    // Tombstoning a subtree must collect the folder itself and all descendants.
+    #[test]
+    fn collect_folder_ptrs_covers_whole_subtree() {
+        let root = sample_tree();
+        let a = &root.children[0];
+        let mut ptrs = Vec::new();
+        collect_folder_ptrs(a, &mut ptrs);
+        // a + a1 = 2 folders.
+        assert_eq!(ptrs.len(), 2);
+        assert!(ptrs.contains(&(a as *const FolderNode)));
+        assert!(ptrs.contains(&(&a.children[0] as *const FolderNode)));
+    }
+
+    // find_node_path returns root..=target; a missing target returns false.
+    #[test]
+    fn find_node_path_locates_and_rejects() {
+        let root = sample_tree();
+        let a1 = &root.children[0].children[0] as *const FolderNode;
+        let mut path = Vec::new();
+        assert!(find_node_path(&root, a1, &mut path));
+        assert_eq!(path.len(), 3); // root, a, a1
+        let mut none = Vec::new();
+        assert!(!find_node_path(&root, std::ptr::null(), &mut none));
     }
 }

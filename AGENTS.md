@@ -44,7 +44,7 @@ rust/                       # Rust port
   src/lib.rs                #   module list
   src/gui.rs                #   Win32 window/message-loop/WndProc, all views (~2.3k lines)
   src/scanner.rs            #   FindFirstFileExW recursive walker (LARGE_FETCH, parallel top-level fan-out)
-  src/mft.rs                #   NTFS MFT parser via \\.\C: raw volume reads (admin fast path)
+  src/mft.rs                #   NTFS MFT parser via \\.\C: raw volume reads (admin fast path); parses records in parallel (FRN == Vec index; see below)
   src/analysis.rs           #   pure tree-walk queries: top_n_files, oldest_n_files (bounded heaps)
   src/treemap.rs            #   pure squarified-treemap layout (unit-tested; GUI paints it via GDI)
   src/temp.rs               #   discover + scan "safe-to-delete" temp/cache locations
@@ -96,6 +96,15 @@ cargo run --bin cluttercutter-cli -- --temp        # enumerate safe-to-delete te
 > MFT mode and the GUI's MFT fast path require **Administrator** (raw `\\.\C:`
 > volume access). The GUI prompts to relaunch elevated at startup if it isn't.
 
+> **MFT parse is parallel.** Each read-chunk's FILE records are parsed across all
+> cores via `thread::scope` (`parse_chunk_parallel`), because a record's FRN is
+> exactly its ordinal position — so entries live in a `Vec<Option<MftEntry>>`
+> indexed by FRN (no hashing) and the chunk's byte-slice + entry-slice split at
+> identical record boundaries with no shared state. Parsing is pure
+> (`parse_record`); only the read is serial. ~1.6× faster on a large volume
+> (C:\ ≈ 8.5s → 5.3s here), identical results (verified old-vs-new on a
+> quiescent volume). If you touch this, keep FRN==index and re-verify totals.
+
 ## Feature parity (Rust port vs C#)
 
 The Rust GUI (`gui.rs`) already implements: drive buttons with auto MFT-vs-walker
@@ -123,15 +132,41 @@ behavior and match it. If you intentionally diverge, note it here.
   in the status bar, click selects, double-click a folder tile drills (syncs
   the tree), right-click opens the shared context menu, Del recycles.
 - **Scan all drives**: button next to the per-drive buttons; scans every
-  volume sequentially (MFT where possible) into a synthetic "All drives" root.
-  Shell actions no-op on the synthetic root (it has an empty path). F5 re-runs
-  whichever scan (single or all) ran last. Also **runs automatically on
-  startup** (kicked from `run()` right after the window shows), so the app
-  opens straight into a populated tree; drives scan in A→Z order.
+  volume (MFT where possible) into a synthetic "All drives" root. Shell actions
+  no-op on the synthetic root (it has an empty path). F5 re-runs whichever scan
+  (single or all) ran last. Also **runs automatically on startup** (kicked from
+  `run()` right after the window shows), so the app opens straight into a
+  populated tree.
+  - **Parallel + incremental**: each drive scans on its own worker thread
+    (volumes are independent → safe, and wall-clock ≈ the slowest drive, not
+    the sum). Drives are appended to the root one at a time as they finish
+    (`WM_APP_DRIVE_DONE` → `on_drive_done` → `append_drive`), so results appear
+    progressively. The root's `children` Vec is pre-reserved to the drive count
+    so these pushes never reallocate (which would dangle the raw child pointers
+    the tree items hold) — **keep that reservation** if you touch this.
+  - Drives are shown **alphabetically** (tree via `TVI_SORT`; the root's list
+    via a name-sort special-case in `populate_list_folders` keyed on the
+    empty synthetic path) and the root is **auto-expanded**
+    (`set_tree_item_has_children` + `TVM_EXPAND`).
+  - `WM_APP_PROGRESS` is **coalesced** (`progress_pending` AtomicBool, at most
+    one in flight) so parallel scanners can't flood the queue and stall the UI.
 - **Recycle all** button in the temp-files panel: recycles every listed temp
-  file in one undoable shell operation, then rescans.
+  file in one undoable background shell operation and clears the list.
 - The **top/oldest side lists** support the full context menu + multi-select
   Del recycle (rows carry (folder, file) pointers via `side_hits`).
+- **In-place delete (no rescan)**: recycling never triggers a full rescan. The
+  `SHFileOperationW` runs on a background thread (`recycle_in_background`), and
+  the in-memory tree is updated in place: the deleted folder's pointer (and all
+  its descendants') go into `deleted_nodes` — a tombstone set that every view
+  skips (`populate_list_folders`, `build_treemap_level`, the top/oldest hit
+  filter) — and ancestor `size`/`file_count`/`folder_count` totals are
+  decremented via `subtract_along_ancestors`. **Nodes are never removed from a
+  `children` Vec** (that would shift memory and dangle the raw pointers the tree
+  items / `side_hits` / `treemap_entries` hold) — they stay allocated and hidden
+  until the next full scan (which clears `deleted_nodes`). If a background
+  recycle reports failure, `on_recycle_done` falls back to a full rescan to
+  resync. The ancestor-total and subtree-collection math is unit-tested
+  (`subtract_along_ancestors`, `collect_folder_ptrs`).
 - **Accessibility (WCAG 2.2 AA)**: the message loop runs `IsDialogMessageW`
   (main + floating frame) so Tab cycles all controls; the treemap is keyboard
   operable (arrows move the tile selection spatially, Enter drills, Del
