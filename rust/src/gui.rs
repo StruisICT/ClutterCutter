@@ -1667,8 +1667,13 @@ unsafe fn populate_children(app: &mut AppState, parent_hti: isize, parent: &Fold
     if !app.populated.insert(parent_hti) {
         return;
     }
-    let mut kids: Vec<&FolderNode> = parent.children.iter().collect();
-    kids.sort_by_key(|n| std::cmp::Reverse(n.size));
+    let mut kids: Vec<&FolderNode> = parent
+        .children
+        .iter()
+        .filter(|c| !app.deleted_nodes.contains(&(*c as *const _ as isize)))
+        .collect();
+    // Alphabetical, matching the folder list.
+    kids.sort_by_key(|n| n.name.to_lowercase());
     for c in kids {
         // Only insert subdirectories as tree items; leaf-like nodes (no children)
         // still appear because every FolderNode here is a directory.
@@ -1763,26 +1768,33 @@ unsafe fn on_tree_select(app: &mut AppState) {
     app.selected_node = lparam;
     let node: &FolderNode = &*(lparam as *const FolderNode);
     populate_list_folders(app, node);
+    // Make sure this node's children exist as tree items (not just on expand),
+    // so double-clicking a folder row can keep drilling level after level —
+    // the list double-click selects a child's tree item, which must be present.
+    // populate_children is idempotent (guards on the `populated` set).
+    populate_children(app, hti, node);
 }
 
 unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
-    let mut kids: Vec<&FolderNode> = node
+
+    // Subfolders first, then the folder's own files — each group sorted
+    // case-insensitively by name. Tombstoned (recycled-in-place) folders are
+    // skipped.
+    let mut folders: Vec<&FolderNode> = node
         .children
         .iter()
         .filter(|c| !app.deleted_nodes.contains(&(*c as *const _ as isize)))
         .collect();
-    // The synthetic "All drives" root (empty path) lists its drives
-    // alphabetically; every real folder lists children biggest-first.
-    if node.full_path.is_empty() {
-        kids.sort_by(|a, b| a.name.cmp(&b.name));
-    } else {
-        kids.sort_by_key(|n| std::cmp::Reverse(n.size));
-    }
-    for (i, k) in kids.iter().enumerate() {
+    folders.sort_by_key(|n| n.name.to_lowercase());
+
+    let mut row = 0i32;
+    for k in &folders {
+        // lParam = the FolderNode pointer, so double-click drills into it and
+        // the context menu can act on it.
         insert_row_with_param(
             app.list,
-            i as i32,
+            row,
             &k.name,
             &[
                 format_bytes(k.size),
@@ -1791,6 +1803,22 @@ unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
             ],
             *k as *const _ as isize,
         );
+        row += 1;
+    }
+
+    let mut files: Vec<&FileEntry> = node.files.iter().collect();
+    files.sort_by_key(|f| f.name.to_lowercase());
+    for f in &files {
+        // lParam 0 marks a file row: not drillable, and folder-only actions
+        // (drill / open-in-explorer) skip it.
+        insert_row_with_param(
+            app.list,
+            row,
+            &f.name,
+            &[format_bytes(f.size), String::new(), String::new()],
+            0,
+        );
+        row += 1;
     }
 }
 
@@ -2340,6 +2368,16 @@ unsafe fn toggle_detach(hwnd: HWND, app: &mut AppState) {
             )
             .expect("float win");
             SetWindowLongPtrW(app.float_win, GWLP_USERDATA, app as *mut AppState as isize);
+            // The float frame is created lazily, so apply the current theme's
+            // dark title bar now (apply_theme only reaches it once it exists).
+            let use_dark = BOOL(if app.is_dark { 1 } else { 0 });
+            let _ = DwmSetWindowAttribute(
+                app.float_win,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &use_dark as *const _ as *const _,
+                std::mem::size_of::<BOOL>() as u32,
+            );
+            allow_dark_mode_for_window(app.float_win, app.is_dark);
         }
         app.detached = true;
         let _ = SetParent(app.panel, app.float_win);
