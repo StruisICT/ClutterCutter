@@ -29,10 +29,10 @@ use windows::Win32::Foundation::{
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColorBrush,
-    GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow, ReleaseDC, SetBkMode, SetTextColor,
-    UpdateWindow, COLOR_BTNFACE, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_LEFT, DT_SINGLELINE,
-    DT_VCENTER, HBRUSH, HDC, PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
-    TRANSPARENT,
+    GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow, ReleaseDC, ScreenToClient,
+    SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE, DT_CENTER, DT_END_ELLIPSIS,
+    DT_HIDEPREFIX, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, PAINTSTRUCT, RDW_ALLCHILDREN,
+    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -63,7 +63,9 @@ use windows::Win32::UI::Controls::{
     TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
     TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
+};
 use windows::Win32::UI::Shell::{
     IsUserAnAdmin, SHFileOperationW, ShellExecuteW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE,
     SHFILEOPSTRUCTW,
@@ -74,16 +76,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, LoadCursorW, LoadIconW,
     MessageBoxW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-    SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-    ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL, BS_PUSHBUTTON,
-    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HMENU,
-    IDC_ARROW, IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MENUBARINFO, MENUITEMINFOW,
-    MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
-    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT,
-    WM_NOTIFY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE,
-    WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
+    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA,
+    HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MB_ICONINFORMATION, MB_OK, MENUBARINFO,
+    MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU,
+    SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+    SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR,
+    WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
+    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -96,11 +99,14 @@ const ID_LIST: u16 = 300;
 const ID_TREE: u16 = 301;
 const ID_SIDE_LIST: u16 = 303;
 const ID_PANEL: u16 = 304;
+const ID_SPLITTER: u16 = 305;
 const ID_STATUS: u16 = 400;
 
 // Side panel geometry
 const PANEL_W: i32 = 420;
 const PANEL_HEADER_H: i32 = 30;
+// Draggable divider between the main list and the side panel.
+const SPLIT_W: i32 = 6;
 // Header button metrics. Buttons are laid out right-to-left with a uniform gap
 // and the title is clamped to the left of the leftmost button, so nothing
 // overlaps at any panel width.
@@ -242,6 +248,11 @@ struct AppState {
     float_win: HWND,
     detached: bool,
     ctx_target: CtxTarget,
+    // Draggable divider between the main list and the panel; `panel_frac` is
+    // the panel's share of the width after the tree (so it grows on resize and
+    // the user can drag it).
+    splitter: HWND,
+    panel_frac: f64,
 
     scanning: bool,
     cancel: Arc<AtomicBool>,
@@ -355,6 +366,8 @@ pub fn run() {
             btn_detach: HWND::default(),
             btn_recycle_all: HWND::default(),
             float_win: HWND::default(),
+            splitter: HWND::default(),
+            panel_frac: 0.40,
             detached: false,
             ctx_target: CtxTarget::MainList,
             scanning: false,
@@ -1009,6 +1022,36 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     .expect("panel");
     SetWindowLongPtrW(app.panel, GWLP_USERDATA, app_lp);
 
+    // Draggable splitter between the main list and the panel.
+    let split_class = w!("ClutterCutterSplitter");
+    let split_wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(splitter_proc),
+        hInstance: hinstance.into(),
+        hCursor: LoadCursorW(None, IDC_SIZEWE).unwrap_or_default(),
+        hbrBackground: GetSysColorBrush(COLOR_BTNFACE),
+        lpszClassName: split_class,
+        ..Default::default()
+    };
+    RegisterClassExW(&split_wc);
+    app.splitter = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        split_class,
+        PCWSTR::null(),
+        WS_CHILD, // shown by layout() when the panel is attached
+        0,
+        80,
+        SPLIT_W,
+        500,
+        hwnd,
+        HMENU(ID_SPLITTER as isize as _),
+        hinstance,
+        None,
+    )
+    .expect("splitter");
+    SetWindowLongPtrW(app.splitter, GWLP_USERDATA, app_lp);
+
     app.btn_detach = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("BUTTON"),
@@ -1285,20 +1328,34 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     let body_h = (rc.bottom - top - STATUS_H).max(0);
     let tree_w = 320;
     let _ = MoveWindow(app.tree, 0, top, tree_w, body_h, true);
-    // The side panel grows with the window while attached: it takes ~40% of
-    // the width after the tree (clamped so it stays usable but never dominates),
-    // and the main list keeps the rest — so both panes get larger on resize.
+    // The side panel takes `panel_frac` of the width after the tree, with a
+    // draggable splitter between it and the main list. Because it's a fraction,
+    // the panel grows with the window and the user can drag the split.
     let panel_here = app.side_view != SideView::None && !app.detached;
+    let split_w = if panel_here { SPLIT_W } else { 0 };
+    let avail = (rc.right - tree_w).max(0);
     let panel_w = if panel_here {
-        let avail = (rc.right - tree_w).max(0);
-        (avail * 2 / 5).clamp(320, 1000).min(avail)
+        let raw = (avail as f64 * app.panel_frac).round() as i32;
+        // Keep both panes usable.
+        raw.clamp(180, (avail - split_w - 180).max(180))
     } else {
         0
     };
-    let list_w = (rc.right - tree_w - panel_w).max(0);
+    let list_w = (rc.right - tree_w - panel_w - split_w).max(0);
     let _ = MoveWindow(app.list, tree_w, top, list_w, body_h, true);
     if panel_here {
-        let _ = MoveWindow(app.panel, tree_w + list_w, top, panel_w, body_h, true);
+        let _ = MoveWindow(app.splitter, tree_w + list_w, top, split_w, body_h, true);
+        let _ = ShowWindow(app.splitter, SW_SHOW);
+        let _ = MoveWindow(
+            app.panel,
+            tree_w + list_w + split_w,
+            top,
+            panel_w,
+            body_h,
+            true,
+        );
+    } else {
+        let _ = ShowWindow(app.splitter, SW_HIDE);
     }
     // Stretch the Name column so the folder list's columns always fill the
     // list width — otherwise widening the window (which slides the flush-right
@@ -2546,6 +2603,55 @@ unsafe extern "system" fn panel_proc(
             LRESULT(0)
         }
         WM_NOTIFY => on_notify(app.main_hwnd, app, lparam),
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// The draggable divider between the main list and the side panel. Dragging it
+// updates `panel_frac` and re-flows the layout live.
+unsafe extern "system" fn splitter_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_SETCURSOR => {
+            let _ = SetCursor(LoadCursorW(None, IDC_SIZEWE).unwrap_or_default());
+            LRESULT(1)
+        }
+        WM_LBUTTONDOWN => {
+            SetCapture(hwnd);
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            if GetCapture() == hwnd {
+                let main = app.main_hwnd;
+                let mut pt = POINT::default();
+                let _ = GetCursorPos(&mut pt);
+                let _ = ScreenToClient(main, &mut pt);
+                let mut rc = RECT::default();
+                let _ = GetClientRect(main, &mut rc);
+                let tree_w = 320;
+                let avail = (rc.right - tree_w).max(1);
+                // The splitter's left edge tracks the cursor; the panel is
+                // everything to its right (minus the splitter width).
+                let panel_w = (rc.right - pt.x - SPLIT_W).clamp(180, (avail - 180).max(180));
+                app.panel_frac = (panel_w as f64 / avail as f64).clamp(0.1, 0.9);
+                layout(main, app);
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            let _ = ReleaseCapture();
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => erase_theme_bg(app, hwnd, HDC(wparam.0 as _)),
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
