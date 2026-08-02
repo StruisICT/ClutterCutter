@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 
 use windows::core::{w, PCSTR, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    BOOL, COLORREF, FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
+    BOOL, COLORREF, FILETIME, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
@@ -79,14 +79,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW,
     SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW,
     TranslateMessage, ACCEL, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    FVIRTKEY, GWLP_USERDATA, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MB_ICONINFORMATION,
-    MB_OK, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING,
-    MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
-    WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE,
-    WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD,
-    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION,
+    MB_ICONINFORMATION, MB_OK, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE,
+    WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCACTIVATE,
+    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_BORDER,
+    WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -341,12 +341,12 @@ pub fn run() {
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: hinstance.into(),
-            hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+            hIcon: load_app_icon(),
             hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
             hbrBackground: GetSysColorBrush(COLOR_BTNFACE),
             lpszMenuName: PCWSTR::null(),
             lpszClassName: class_name,
-            hIconSm: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+            hIconSm: load_app_icon(),
         };
         if RegisterClassExW(&wc) == 0 {
             return;
@@ -504,6 +504,21 @@ fn save_window_size(w: i32, h: i32) {
         }
         let _ = std::fs::write(&p, format!("{w} {h}"));
     }
+}
+
+// Loads the app's own icon embedded by app.rc (resource id 1) so the window's
+// title bar / Alt-Tab icon matches the taskbar icon; falls back to the system
+// application icon if the resource can't be loaded.
+unsafe fn load_app_icon() -> HICON {
+    // PCWSTR(1) is MAKEINTRESOURCE(1) — a resource ordinal, not a real pointer.
+    #[allow(clippy::manual_dangling_ptr)]
+    let icon_ordinal = PCWSTR(1 as *const u16);
+    if let Ok(h) = GetModuleHandleW(None) {
+        if let Ok(icon) = LoadIconW(HINSTANCE(h.0), icon_ordinal) {
+            return icon;
+        }
+    }
+    LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
 }
 
 fn accel(vk: u16, cmd: u16) -> ACCEL {
@@ -1050,7 +1065,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         style: Default::default(),
         lpfnWndProc: Some(float_proc),
         hInstance: hinstance.into(),
-        hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+        hIcon: load_app_icon(),
         hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
         hbrBackground: GetSysColorBrush(COLOR_BTNFACE),
         lpszClassName: float_class,
