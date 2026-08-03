@@ -129,14 +129,23 @@ behavior and match it. If you intentionally diverge, note it here.
   breadcrumb-segment clicks call `TVM_SELECTITEM`, which fires `on_tree_select`.
   The breadcrumb rebuilds its segments each paint by walking the hidden tree's
   parent chain (`crumb_segs` stores per-segment hit rects). Brand palette lives
-  in the `BRAND_*` consts (`#0F3695` / `#4496C8` / white); the status bar, panel
-  header, sidebar header and pill are brand-blue. Layout geometry: `TOPBAR_H`,
-  `SIDEBAR_W`, `CRUMB_H`, `DRIVE_CARD_H`. The main table has custom-drawn columns
-  (`custom_draw_main_list` paints the "% of parent" bar; `custom_draw_side_list`
-  paints the side panel's Size column as a brand-blue badge) — both via
-  `NM_CUSTOMDRAW` routed through `on_notify`. Two brand fonts (`font_title`,
-  `font_small`) are created in `create_children` (Segoe UI stands in for the
-  brand's Raleway).
+  centrally in `palette(is_dark) -> Pal` and tuned to match the mockup
+  `index-selection.png`: **light chrome** (top bar / sidebar / status /
+  panel header are `#EEF0F4` / `#FFF` / `#F7F8FA`, *not* brand-blue) with a
+  two-accent split — **blue `#2D6BF0`** for drive usage bars, sizes and the
+  active card border, **green `#70BB51`** for the table "% of parent" bars.
+  Rounded shapes via `fill_round` / `card_round` (RoundRect). The logo is the
+  Struis "S" mark (`struis-s.ico`, **icon resource 2** in `app.rc`, loaded with
+  `load_logo_icon`); "Struis ICT" is a bordered chip; the theme pill is a
+  rounded track with a dark knob + Segoe MDL2 sun/moon glyphs. Layout geometry:
+  `TOPBAR_H`, `SIDEBAR_W`, `CRUMB_H`, `DRIVE_CARD_H`. The main table has
+  custom-drawn columns (`custom_draw_main_list` paints the Name column's
+  folder/file glyph + text and the green "% of parent" bar; `custom_draw_side_list`
+  paints the side-panel Size column as blue text) — both via `NM_CUSTOMDRAW`
+  routed through `on_notify`, with per-row selection read via `LVM_GETITEMSTATE`
+  (`nmcd.uItemState` is unreliable at the sub-item stage). Gridlines are off.
+  Fonts created in `create_children`: `font_title`, `font_small` (Segoe UI, for
+  the brand's Raleway) and `font_icon` (Segoe MDL2 Assets glyphs).
 - **Side panel layout**: the View menu picks an optional extra view (**Top
   largest files**, **Oldest files**, **Safe-to-delete temp files**) shown in a
   right-hand panel. The panel header has a **Detach** button (also View ▸
