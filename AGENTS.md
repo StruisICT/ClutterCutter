@@ -106,8 +106,9 @@ cargo run --bin cluttercutter-cli -- --temp        # enumerate safe-to-delete te
 
 ## Feature parity (Rust port vs C#)
 
-The Rust GUI (`gui.rs`) already implements: drive buttons with auto MFT-vs-walker
-selection, tree + size-sorted list (always visible), drill-in/breadcrumb-by-parent,
+The Rust GUI (`gui.rs`) already implements: drive scanning with auto MFT-vs-walker
+selection, the DRIVES sidebar + table + clickable breadcrumb (see the Struis ICT
+redesign below; the folder tree still exists but is hidden and drives navigation),
 Dark/Light/Auto theme (incl. immersive dark title bar via DWM), the right-click
 context menu (Open in Explorer / Copy path / Cmd here / Recycle), and the
 keyboard shortcuts (F5 rescan, Esc stop, Backspace parent, Enter drill, Del
@@ -118,13 +119,39 @@ When adding a feature, check the C# app (`ClutterCutter.cs`) for the reference
 behavior and match it. If you intentionally diverge, note it here.
 
 **Intentional divergences (Rust-only):**
-- **Side panel layout**: the drive tree and the selected folder's list are
-  always visible; the View menu picks an optional extra view (**Top largest
-  files**, **Oldest files**, **Safe-to-delete temp files**) shown in a
+- **Struis ICT redesign (the app's chrome)**: three owner-drawn custom windows
+  in `gui.rs` — `topbar_proc` (logo + "ClutterCutter" / "Struis ICT" + a
+  theme-toggle pill), `sidebar_proc` (the left **DRIVES** column of usage-bar
+  cards; the reparented Scan-all button lives at its bottom and its `WM_COMMAND`
+  is forwarded to the main window; card clicks post `ID_DRIVE_BASE+i`), and
+  `crumb_proc` (the breadcrumb path bar). The **folder tree is kept but hidden**
+  (`SW_HIDE`) — it still holds all navigation state: double-click / Enter /
+  breadcrumb-segment clicks call `TVM_SELECTITEM`, which fires `on_tree_select`.
+  The breadcrumb rebuilds its segments each paint by walking the hidden tree's
+  parent chain (`crumb_segs` stores per-segment hit rects). Brand palette lives
+  centrally in `palette(is_dark) -> Pal` and tuned to match the mockup
+  `index-selection.png`: **light chrome** (top bar / sidebar / status /
+  panel header are `#EEF0F4` / `#FFF` / `#F7F8FA`, *not* brand-blue) with a
+  two-accent split — **blue `#2D6BF0`** for drive usage bars, sizes and the
+  active card border, **green `#70BB51`** for the table "% of parent" bars.
+  Rounded shapes via `fill_round` / `card_round` (RoundRect). The logo is the
+  Struis "S" mark (`struis-s.ico`, **icon resource 2** in `app.rc`, loaded with
+  `load_logo_icon`); "Struis ICT" is a bordered chip; the theme pill is a
+  rounded track with a dark knob + Segoe MDL2 sun/moon glyphs. Layout geometry:
+  `TOPBAR_H`, `SIDEBAR_W`, `CRUMB_H`, `DRIVE_CARD_H`. The main table has
+  custom-drawn columns (`custom_draw_main_list` paints the Name column's
+  folder/file glyph + text and the green "% of parent" bar; `custom_draw_side_list`
+  paints the side-panel Size column as blue text) — both via `NM_CUSTOMDRAW`
+  routed through `on_notify`, with per-row selection read via `LVM_GETITEMSTATE`
+  (`nmcd.uItemState` is unreliable at the sub-item stage). Gridlines are off.
+  Fonts created in `create_children`: `font_title`, `font_small` (Segoe UI, for
+  the brand's Raleway) and `font_icon` (Segoe MDL2 Assets glyphs).
+- **Side panel layout**: the View menu picks an optional extra view (**Top
+  largest files**, **Oldest files**, **Safe-to-delete temp files**) shown in a
   right-hand panel. The panel header has a **Detach** button (also View ▸
   Detach side panel) that floats it in its own resizable window — closing the
-  float re-attaches. Theme sits in its own top-level menu. The C# app instead
-  swaps the single main view.
+  float re-attaches. Theme sits in its own top-level menu (plus the top-bar
+  pill). The C# app instead swaps the single main view.
 - **Scan all drives**: button next to the per-drive buttons; scans every
   volume (MFT where possible) into a synthetic "All drives" root. Shell actions
   no-op on the synthetic root (it has an empty path). F5 re-runs whichever scan
@@ -296,12 +323,22 @@ Rust port.
 
 ## Status & next steps
 
-_Last updated: 2026-07-10._
+_Last updated: 2026-08-03._
 
-- Released: **v0.3.0**. The open release-please PR now resolves to **0.4.0**
-  (the unreleased top-N / oldest / temp-files `feat:` commits bump the minor
-  under SemVer, after switching `bump-patch-for-minor-pre-major` off).
-- Rust port is at/near parity with the C# app (see Feature parity above).
+- Released: **v0.6.0**. A **Struis ICT visual redesign** landed after that
+  (in PR #38, not yet released as its own version). It went through several
+  passes: first the branded chrome, then a **1:1 match to the mockup**
+  `index-selection.png` (light chrome; blue `#2D6BF0` drive/size accents; green
+  `#70BB51` table bars; flat folder/file glyphs; two-line side-panel cards), then
+  UX refinements: the top bar shows **Back/Forward/Up nav buttons** (history in
+  `nav_hist`/`nav_pos`) instead of any logo/wordmark — **no Struis/ClutterCutter
+  branding on the main screen; Struis ICT is named only in the About dialog**.
+  The side panel has a **view-switch toolbar** (Top/Oldest/Temp icon buttons,
+  active outlined in blue) and the theme toggle is a bordered **slider** pill.
+  Theme changes force a synchronous chrome repaint (`RDW_UPDATENOW`).
+- Rust port is at/near parity with the C# app (see Feature parity above). Note
+  the C# build has **not** been given the redesign — the Rust build is the one
+  that matches the Struis ICT house style now.
 - A treemap view was built then **removed** at the user's request — don't
   re-add it without being asked.
 - The Rust port persists its **window size** to `%APPDATA%\ClutterCutter\window.cfg`
