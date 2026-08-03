@@ -28,12 +28,13 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    GetSysColor, GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow,
-    ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE,
-    COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX,
-    DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT,
-    RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, TRANSPARENT,
+    BeginPaint, CreateFontW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
+    FillRect, GetSysColor, GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints,
+    RedrawWindow, ReleaseDC, RoundRect, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
+    UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER,
+    DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC,
+    HFONT, HGDIOBJ, PAINTSTRUCT, PS_SOLID, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
+    TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -52,22 +53,21 @@ use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificL
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
     InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, CDDS_ITEMPREPAINT, CDDS_PREPAINT,
-    CDDS_SUBITEM, CDIS_SELECTED, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
-    CDRF_SKIPDEFAULT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
-    ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT,
-    LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN,
-    LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM,
-    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
-    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
-    LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES, LVS_REPORT,
-    LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK,
-    TASKDIALOGCONFIG, TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON,
-    TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN,
-    TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE,
-    TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW,
-    TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
-    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
-    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT,
+    ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES,
+    INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW,
+    LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER,
+    LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
+    LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE,
+    LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW,
+    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, TASKDIALOGCONFIG, TASKDIALOGCONFIG_0,
+    TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
+    TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN, TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET,
+    TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
+    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
+    TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
+    TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
@@ -81,18 +81,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawIconEx, DrawMenuBar,
     GetClientRect, GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, LoadCursorW,
-    LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-    SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
-    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, DI_NORMAL, FVIRTKEY,
-    GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO,
-    MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU,
-    SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-    SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR,
-    WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
-    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    LoadIconW, LoadImageW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW,
+    SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW,
+    TranslateMessage, ACCEL, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
+    DI_NORMAL, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION,
+    IMAGE_ICON, LR_DEFAULTCOLOR, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE,
+    WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCACTIVATE,
+    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_BORDER,
+    WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -110,12 +110,6 @@ const ID_TOPBAR: u16 = 306;
 const ID_SIDEBAR: u16 = 307;
 const ID_CRUMB: u16 = 308;
 const ID_STATUS: u16 = 400;
-
-// Struis ICT brand palette (from the house stylesheet). COLORREF is 0x00BBGGRR,
-// so the RGB hex is byte-swapped: #0F3695 -> 0x00953_60F, #4496C8 -> 0x00C89644.
-const BRAND_BLUE: u32 = 0x0095_360F; // #0F3695 primary dark blue
-const BRAND_BLUE_LIGHT: u32 = 0x00C8_9644; // #4496C8 accent light blue
-const BRAND_ON_BLUE: u32 = 0x00FF_FFFF; // #FFFFFF text on brand blue
 
 // Sum of the fixed main-list column widths (everything except the stretching
 // Name column): 128 + 90 + 90 + 80 + 80 + 120. Keep in sync with insert_column.
@@ -273,6 +267,8 @@ struct AppState {
     crumb: HWND,
     font_title: HFONT,
     font_small: HFONT,
+    // Segoe MDL2 Assets glyphs (folder / file / drive / sun / moon icons).
+    font_icon: HFONT,
     // Index into `drives` of the drive whose scan is shown (-1 = all drives),
     // for highlighting the active sidebar card.
     active_drive: i32,
@@ -413,6 +409,7 @@ pub fn run() {
             crumb: HWND::default(),
             font_title: HFONT::default(),
             font_small: HFONT::default(),
+            font_icon: HFONT::default(),
             active_drive: -1,
             crumb_segs: Vec::new(),
             panel: HWND::default(),
@@ -575,6 +572,26 @@ unsafe fn load_app_icon() -> HICON {
         }
     }
     LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
+}
+
+// Loads the Struis ICT "S" logo mark (resource id 2) at the requested pixel
+// size for the top bar; falls back to the app icon.
+unsafe fn load_logo_icon(size: i32) -> HICON {
+    #[allow(clippy::manual_dangling_ptr)]
+    let ordinal = PCWSTR(2 as *const u16);
+    if let Ok(h) = GetModuleHandleW(None) {
+        if let Ok(handle) = LoadImageW(
+            HINSTANCE(h.0),
+            ordinal,
+            IMAGE_ICON,
+            size,
+            size,
+            LR_DEFAULTCOLOR,
+        ) {
+            return HICON(handle.0);
+        }
+    }
+    load_app_icon()
 }
 
 fn accel(vk: u16, cmd: u16) -> ACCEL {
@@ -968,12 +985,20 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
     LRESULT(0)
 }
 
-// Column index of the custom-drawn "% of parent" bar in the main list.
+// Reliable per-row selection test: `nmcd.uItemState` is not dependable at the
+// sub-item custom-draw stage, so query the list directly (LVIS_SELECTED = 2).
+unsafe fn row_selected(list: HWND, row: usize) -> bool {
+    SendMessageW(list, LVM_GETITEMSTATE, WPARAM(row), LPARAM(2)).0 & 2 != 0
+}
+
+// Custom-drawn columns of the main list: Name (icon + text) and the "% of
+// parent" bar.
+const NAME_COL: i32 = 0;
 const PCT_COL: i32 = 1;
 
-// Owner-draws the "% of parent" column as a proportional bar plus a percentage
-// label, in the Struis ICT accent blue. Every other subitem is left to the
-// default list rendering.
+// Owner-draws the Name column (a folder/file glyph + the name) and the
+// "% of parent" column (a green proportional bar + percentage), matching the
+// Struis ICT mockup. Every other subitem falls through to default rendering.
 unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LRESULT {
     let lv = &*lv;
     let stage = lv.nmcd.dwDrawStage.0;
@@ -983,42 +1008,103 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     if stage == CDDS_ITEMPREPAINT.0 {
         return LRESULT(CDRF_NOTIFYSUBITEMDRAW as isize);
     }
-    if stage != (CDDS_SUBITEM.0 | CDDS_ITEMPREPAINT.0) || lv.iSubItem != PCT_COL {
+    let sub = lv.iSubItem;
+    if stage != (CDDS_SUBITEM.0 | CDDS_ITEMPREPAINT.0) || (sub != NAME_COL && sub != PCT_COL) {
         return LRESULT(CDRF_DODEFAULT as isize);
     }
 
     let row = lv.nmcd.dwItemSpec;
+    let hdc = lv.nmcd.hdc;
+    let rc = lv.nmcd.rc;
+    let selected = row_selected(app.list, row);
+    let p = palette(app.is_dark);
+    let (bg, fg) = if selected {
+        (
+            GetSysColor(COLOR_HIGHLIGHT),
+            GetSysColor(COLOR_HIGHLIGHTTEXT),
+        )
+    } else {
+        (p.card_bg, p.text)
+    };
+    let bgb = CreateSolidBrush(COLORREF(bg));
+    FillRect(hdc, &rc, bgb);
+    let _ = DeleteObject(bgb);
+    SetBkMode(hdc, TRANSPARENT);
+
+    if sub == NAME_COL {
+        // Folder rows carry the node pointer in lParam; file rows carry 0.
+        let is_folder = list_item_lparam(app.list, row as i32) != 0;
+        // Icon glyph (Segoe MDL2): folder in blue, file in muted grey.
+        let list_font = SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+        let mut glyph: Vec<u16> = if is_folder {
+            "\u{E8B7}".encode_utf16().collect() // Folder
+        } else {
+            "\u{E8A5}".encode_utf16().collect() // Document
+        };
+        let icon_color = if selected {
+            fg
+        } else if is_folder {
+            p.blue
+        } else {
+            p.subtext
+        };
+        SetTextColor(hdc, COLORREF(icon_color));
+        let mut irc = RECT {
+            left: rc.left + 6,
+            top: rc.top,
+            right: rc.left + 30,
+            bottom: rc.bottom,
+        };
+        DrawTextW(
+            hdc,
+            &mut glyph,
+            &mut irc,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        );
+        // Name text (restore the list's own font for regular weight).
+        SelectObject(hdc, list_font);
+        let mut buf = [0u16; 260];
+        let mut it = LVITEMW {
+            iSubItem: NAME_COL,
+            pszText: PWSTR(buf.as_mut_ptr()),
+            cchTextMax: buf.len() as i32,
+            ..Default::default()
+        };
+        let len = SendMessageW(
+            app.list,
+            LVM_GETITEMTEXTW,
+            WPARAM(row),
+            LPARAM(&mut it as *mut _ as isize),
+        )
+        .0 as usize;
+        let mut name = buf[..len.min(buf.len())].to_vec();
+        let mut nrc = RECT {
+            left: rc.left + 34,
+            top: rc.top,
+            right: rc.right - 4,
+            bottom: rc.bottom,
+        };
+        SetTextColor(hdc, COLORREF(fg));
+        DrawTextW(
+            hdc,
+            &mut name,
+            &mut nrc,
+            DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+        );
+        return LRESULT(CDRF_SKIPDEFAULT as isize);
+    }
+
+    // PCT_COL: green rounded bar + percentage text.
     let pct = app
         .list_pct
         .get(row)
         .copied()
         .unwrap_or(0.0)
         .clamp(0.0, 1.0);
-    let hdc = lv.nmcd.hdc;
-    let rc = lv.nmcd.rc;
-    let selected = (lv.nmcd.uItemState.0 & CDIS_SELECTED.0) != 0;
-
-    // Cell background matches the default row: system highlight when selected,
-    // else the themed list background.
-    let (bg, fg) = if selected {
-        (
-            GetSysColor(COLOR_HIGHLIGHT),
-            GetSysColor(COLOR_HIGHLIGHTTEXT),
-        )
-    } else if app.is_dark {
-        (0x0020_2020u32, 0x00E0_E0E0u32)
-    } else {
-        (0x00FF_FFFFu32, 0x0000_0000u32)
-    };
-    let bgb = CreateSolidBrush(COLORREF(bg));
-    FillRect(hdc, &rc, bgb);
-    let _ = DeleteObject(bgb);
-
-    // Reserve the right strip for the percentage text; the bar fills the rest.
     let text_w = 52;
-    let bar_left = rc.left + 8;
+    let bar_left = rc.left + 6;
     let bar_right = rc.right - text_w - 4;
-    let bar_h = 10;
+    let bar_h = 8;
     let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
     if bar_right - bar_left > 16 {
         let track = RECT {
@@ -1027,28 +1113,18 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
             right: bar_right,
             bottom: bar_top + bar_h,
         };
-        let track_col = if app.is_dark {
-            0x0045_4545u32
-        } else {
-            0x00E2_E2E2u32
-        };
-        let tb = CreateSolidBrush(COLORREF(track_col));
-        FillRect(hdc, &track, tb);
-        let _ = DeleteObject(tb);
+        fill_round(hdc, &track, 4, if selected { 0x00C8_C8C8 } else { p.track });
         let fill_w = ((bar_right - bar_left) as f32 * pct).round() as i32;
-        if fill_w > 0 {
+        if fill_w >= 4 {
             let fill = RECT {
                 left: bar_left,
                 top: bar_top,
                 right: bar_left + fill_w,
                 bottom: bar_top + bar_h,
             };
-            let fb = CreateSolidBrush(COLORREF(BRAND_BLUE_LIGHT));
-            FillRect(hdc, &fill, fb);
-            let _ = DeleteObject(fb);
+            fill_round(hdc, &fill, 4, p.green);
         }
     }
-
     let mut txt: Vec<u16> = format!("{:.1}%", pct * 100.0).encode_utf16().collect();
     let mut trc = RECT {
         left: rc.right - text_w - 2,
@@ -1056,7 +1132,6 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
         right: rc.right - 6,
         bottom: rc.bottom,
     };
-    SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(fg));
     DrawTextW(
         hdc,
@@ -1070,8 +1145,8 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
 // Side-list Size column index (subitem 1 in every side view).
 const SIDE_SIZE_COL: i32 = 1;
 
-// Owner-draws the side panel's Size column as a right-aligned brand-blue badge
-// with white text, matching the Struis ICT design's file panel.
+// Owner-draws the side panel's Size column as right-aligned blue text, matching
+// the Struis ICT mockup's file panel.
 unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LRESULT {
     let lv = &*lv;
     let stage = lv.nmcd.dwDrawStage.0;
@@ -1088,19 +1163,17 @@ unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     let row = lv.nmcd.dwItemSpec;
     let hdc = lv.nmcd.hdc;
     let rc = lv.nmcd.rc;
-    let selected = (lv.nmcd.uItemState.0 & CDIS_SELECTED.0) != 0;
+    let selected = row_selected(app.side_list, row);
+    let p = palette(app.is_dark);
     let bg = if selected {
         GetSysColor(COLOR_HIGHLIGHT)
-    } else if app.is_dark {
-        0x0020_2020u32
     } else {
-        0x00FF_FFFFu32
+        p.panel_bg
     };
     let bgb = CreateSolidBrush(COLORREF(bg));
     FillRect(hdc, &rc, bgb);
     let _ = DeleteObject(bgb);
 
-    // Read the Size subitem text into a badge.
     let mut buf = [0u16; 64];
     let mut it = LVITEMW {
         iSubItem: SIDE_SIZE_COL,
@@ -1121,36 +1194,34 @@ unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
 
     SetBkMode(hdc, TRANSPARENT);
     let mut txt = buf[..len.min(buf.len())].to_vec();
-    let mut calc = RECT::default();
-    DrawTextW(hdc, &mut txt, &mut calc, DT_CALCRECT | DT_SINGLELINE);
-    let tw = calc.right - calc.left;
-    let badge_h = 18;
-    let badge_w = tw + 16;
-    let by = rc.top + ((rc.bottom - rc.top) - badge_h) / 2;
-    let bx_right = rc.right - 6;
-    let badge = RECT {
-        left: (bx_right - badge_w).max(rc.left + 2),
-        top: by,
-        right: bx_right,
-        bottom: by + badge_h,
+    let color = if selected {
+        GetSysColor(COLOR_HIGHLIGHTTEXT)
+    } else {
+        p.blue
     };
-    let bb = CreateSolidBrush(COLORREF(BRAND_BLUE));
-    FillRect(hdc, &badge, bb);
-    let _ = DeleteObject(bb);
-    let mut brc = badge;
-    SetTextColor(hdc, COLORREF(BRAND_ON_BLUE));
+    SetTextColor(hdc, COLORREF(color));
+    let mut trc = RECT {
+        left: rc.left + 2,
+        top: rc.top,
+        right: rc.right - 8,
+        bottom: rc.bottom,
+    };
     DrawTextW(
         hdc,
         &mut txt,
-        &mut brc,
-        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        &mut trc,
+        DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
     );
     LRESULT(CDRF_SKIPDEFAULT as isize)
 }
 
 unsafe fn make_font(height: i32, weight: i32) -> HFONT {
-    let face: Vec<u16> = "Segoe UI\0".encode_utf16().collect();
     // Segoe UI stands in for the brand's Raleway (not installed on Windows).
+    make_font_face(height, weight, "Segoe UI")
+}
+
+unsafe fn make_font_face(height: i32, weight: i32, face: &str) -> HFONT {
+    let face: Vec<u16> = format!("{face}\0").encode_utf16().collect();
     // Charset/precision/pitch left at defaults; quality = CLEARTYPE_QUALITY (5).
     CreateFontW(
         height,
@@ -1170,28 +1241,75 @@ unsafe fn make_font(height: i32, weight: i32) -> HFONT {
     )
 }
 
-// Chrome colours for the redesigned surfaces, per theme:
-// (window bg, card/panel bg, selected bg, primary text, secondary text, hairline).
-fn chrome_colors(is_dark: bool) -> (u32, u32, u32, u32, u32, u32) {
+// The redesign matches the Struis ICT mockup (index-selection.png): a clean
+// light UI with a blue accent for drives/sizes and a green accent for the
+// table's %-of-parent bars. `Pal` collects the per-theme colours (COLORREF
+// 0x00BBGGRR); `palette` returns the light or dark variant.
+#[derive(Clone, Copy)]
+struct Pal {
+    win_bg: u32,   // top bar / sidebar / status strip background
+    card_bg: u32,  // cards, table, panel header
+    panel_bg: u32, // side-panel body
+    text: u32,     // primary text
+    subtext: u32,  // secondary / muted text
+    hairline: u32, // borders and separators
+    track: u32,    // unfilled bar track
+    blue: u32,     // #2D6BF0 accent (drive bars, sizes, active card border)
+    green: u32,    // #70BB51 accent (table %-of-parent bars)
+}
+
+fn palette(is_dark: bool) -> Pal {
     if is_dark {
-        (
-            0x0026_2626,
-            0x0030_3030,
-            0x003A_3320,
-            0x00F0_F0F0,
-            0x00A8_A8A8,
-            0x003A_3A3A,
-        )
+        Pal {
+            win_bg: 0x0026_2626,
+            card_bg: 0x002E_2E2E,
+            panel_bg: 0x0022_2222,
+            text: 0x00EC_ECEC,
+            subtext: 0x00A0_A0A0,
+            hairline: 0x003C_3C3C,
+            track: 0x0040_4040,
+            blue: 0x00F5_824C,  // #4C82F5
+            green: 0x005C_C87C, // #7CC85C
+        }
     } else {
-        (
-            0x00F5_F3F1,
-            0x00FF_FFFF,
-            0x00F4_E4D2,
-            0x0020_2020,
-            0x0070_7070,
-            0x00DC_DCDC,
-        )
+        Pal {
+            win_bg: 0x00F4_F0EE, // #EEF0F4
+            card_bg: 0x00FF_FFFF,
+            panel_bg: 0x00FA_F8F7, // #F7F8FA
+            text: 0x0022_2622,
+            subtext: 0x00A0_928A,  // #8A92A0
+            hairline: 0x00EC_E7E4, // #E4E7EC
+            track: 0x00F1_ECE9,    // #E9ECF1
+            blue: 0x00F0_6B2D,     // #2D6BF0
+            green: 0x0051_BB70,    // #70BB51
+        }
     }
+}
+
+// Filled rounded rectangle in `color` (no visible border).
+unsafe fn fill_round(hdc: HDC, rc: &RECT, radius: i32, color: u32) {
+    let br = CreateSolidBrush(COLORREF(color));
+    let pen = CreatePen(PS_SOLID, 1, COLORREF(color));
+    let ob = SelectObject(hdc, HGDIOBJ(br.0));
+    let op = SelectObject(hdc, HGDIOBJ(pen.0));
+    let _ = RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, radius, radius);
+    SelectObject(hdc, ob);
+    SelectObject(hdc, op);
+    let _ = DeleteObject(br);
+    let _ = DeleteObject(pen);
+}
+
+// Rounded rectangle filled with `fill` and stroked with a 1px `border`.
+unsafe fn card_round(hdc: HDC, rc: &RECT, radius: i32, fill: u32, border: u32, border_w: i32) {
+    let br = CreateSolidBrush(COLORREF(fill));
+    let pen = CreatePen(PS_SOLID, border_w, COLORREF(border));
+    let ob = SelectObject(hdc, HGDIOBJ(br.0));
+    let op = SelectObject(hdc, HGDIOBJ(pen.0));
+    let _ = RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, radius, radius);
+    SelectObject(hdc, ob);
+    SelectObject(hdc, op);
+    let _ = DeleteObject(br);
+    let _ = DeleteObject(pen);
 }
 
 // The theme-toggle pill rectangle, right-aligned within the top bar's client rect.
@@ -1227,9 +1345,9 @@ unsafe extern "system" fn topbar_proc(
             let hdc = BeginPaint(hwnd, &mut ps);
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
-            let (bg, _card, _sel, text, sub, line) = chrome_colors(app.is_dark);
+            let p = palette(app.is_dark);
 
-            let b = CreateSolidBrush(COLORREF(bg));
+            let b = CreateSolidBrush(COLORREF(p.win_bg));
             FillRect(hdc, &rc, b);
             let _ = DeleteObject(b);
             // Bottom hairline.
@@ -1237,17 +1355,17 @@ unsafe extern "system" fn topbar_proc(
                 top: rc.bottom - 1,
                 ..rc
             };
-            let hb = CreateSolidBrush(COLORREF(line));
+            let hb = CreateSolidBrush(COLORREF(p.hairline));
             FillRect(hdc, &hair, hb);
             let _ = DeleteObject(hb);
 
-            // Logo mark (the app icon) at the left, vertically centred.
-            let icon = load_app_icon();
-            let iy = (rc.bottom - 32) / 2;
-            let _ = DrawIconEx(hdc, 14, iy, icon, 32, 32, 0, None, DI_NORMAL);
+            // Struis ICT "S" logo mark at the left, vertically centred.
+            let icon = load_logo_icon(34);
+            let iy = (rc.bottom - 34) / 2;
+            let _ = DrawIconEx(hdc, 14, iy, icon, 34, 34, 0, None, DI_NORMAL);
 
             SetBkMode(hdc, TRANSPARENT);
-            let x0 = 14 + 32 + 12;
+            let x0 = 14 + 34 + 12;
             // Title.
             let old = SelectObject(hdc, HGDIOBJ(app.font_title.0));
             let mut title: Vec<u16> = "ClutterCutter".encode_utf16().collect();
@@ -1260,58 +1378,54 @@ unsafe extern "system" fn topbar_proc(
                 right: x0 + title_w + 4,
                 bottom: rc.bottom,
             };
-            SetTextColor(hdc, COLORREF(text));
+            SetTextColor(hdc, COLORREF(p.text));
             DrawTextW(
                 hdc,
                 &mut title,
                 &mut trc,
                 DT_SINGLELINE | DT_VCENTER | DT_LEFT,
             );
-            // Subtitle, in brand blue, to the right of the title.
+            // "Struis ICT" as a bordered rounded chip in muted text.
             SelectObject(hdc, HGDIOBJ(app.font_small.0));
             let mut sube: Vec<u16> = "Struis ICT".encode_utf16().collect();
-            let brand = if app.is_dark {
-                BRAND_BLUE_LIGHT
-            } else {
-                BRAND_BLUE
+            let mut scalc = RECT::default();
+            DrawTextW(hdc, &mut sube, &mut scalc, DT_CALCRECT | DT_SINGLELINE);
+            let chip_w = (scalc.right - scalc.left) + 24;
+            let chip_h = 26;
+            let chip_l = x0 + title_w + 14;
+            let chip_t = (rc.bottom - chip_h) / 2;
+            let chip = RECT {
+                left: chip_l,
+                top: chip_t,
+                right: chip_l + chip_w,
+                bottom: chip_t + chip_h,
             };
-            SetTextColor(hdc, COLORREF(brand));
-            let sx = x0 + title_w + 12;
-            let mut src = RECT {
-                left: sx,
-                top: 0,
-                right: rc.right - 120,
-                bottom: rc.bottom,
-            };
+            card_round(hdc, &chip, 13, p.win_bg, p.subtext, 1);
+            SetTextColor(hdc, COLORREF(p.subtext));
+            let mut src = chip;
             DrawTextW(
                 hdc,
                 &mut sube,
                 &mut src,
-                DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
             );
 
-            // Theme pill: sun | moon, active half filled in brand blue.
+            // Theme pill: rounded track with a dark knob on the active side and
+            // Segoe MDL2 sun / moon glyphs.
             let pr = pill_rect(&rc);
-            let track = if app.is_dark {
-                0x0050_5050u32
-            } else {
-                0x00DA_DADAu32
-            };
-            let tb = CreateSolidBrush(COLORREF(track));
-            FillRect(hdc, &pr, tb);
-            let _ = DeleteObject(tb);
+            let pill_r = (pr.bottom - pr.top) / 2;
+            fill_round(hdc, &pr, pill_r, p.track);
             let mid = (pr.left + pr.right) / 2;
-            let active = RECT {
-                left: if app.is_dark { mid } else { pr.left },
-                right: if app.is_dark { pr.right } else { mid },
+            let light_active = !app.is_dark;
+            let knob = RECT {
+                left: if light_active { pr.left } else { mid },
+                right: if light_active { mid } else { pr.right },
                 ..pr
             };
-            let ab = CreateSolidBrush(COLORREF(BRAND_BLUE));
-            FillRect(hdc, &active, ab);
-            let _ = DeleteObject(ab);
-            // Glyphs.
-            let mut sun: Vec<u16> = "\u{2600}".encode_utf16().collect();
-            let mut moon: Vec<u16> = "\u{263D}".encode_utf16().collect();
+            fill_round(hdc, &knob, pill_r, 0x001E_1E1E);
+            SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+            let mut sun: Vec<u16> = "\u{E706}".encode_utf16().collect(); // Brightness
+            let mut moon: Vec<u16> = "\u{E708}".encode_utf16().collect(); // QuietHours
             let mut lrc = RECT {
                 left: pr.left,
                 right: mid,
@@ -1322,14 +1436,20 @@ unsafe extern "system" fn topbar_proc(
                 right: pr.right,
                 ..pr
             };
-            SetTextColor(hdc, COLORREF(if app.is_dark { sub } else { 0x00FF_FFFF }));
+            SetTextColor(
+                hdc,
+                COLORREF(if light_active { 0x00FF_FFFF } else { p.subtext }),
+            );
             DrawTextW(
                 hdc,
                 &mut sun,
                 &mut lrc,
                 DT_SINGLELINE | DT_VCENTER | DT_CENTER,
             );
-            SetTextColor(hdc, COLORREF(if app.is_dark { 0x00FF_FFFF } else { sub }));
+            SetTextColor(
+                hdc,
+                COLORREF(if light_active { p.subtext } else { 0x00FF_FFFF }),
+            );
             DrawTextW(
                 hdc,
                 &mut moon,
@@ -1386,27 +1506,22 @@ unsafe extern "system" fn sidebar_proc(
             let hdc = BeginPaint(hwnd, &mut ps);
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
-            let (bg, card, sel, text, sub, _line) = chrome_colors(app.is_dark);
-            let b = CreateSolidBrush(COLORREF(bg));
+            let p = palette(app.is_dark);
+            let b = CreateSolidBrush(COLORREF(p.win_bg));
             FillRect(hdc, &rc, b);
             let _ = DeleteObject(b);
 
             SetBkMode(hdc, TRANSPARENT);
             SelectObject(hdc, HGDIOBJ(app.font_small.0));
-            // "DRIVES" section header.
+            // "DRIVES" section header, muted grey.
             let mut hdr: Vec<u16> = "DRIVES".encode_utf16().collect();
             let mut hrc = RECT {
-                left: 16,
-                top: 8,
+                left: 18,
+                top: 10,
                 right: rc.right - 12,
-                bottom: 26,
+                bottom: 30,
             };
-            let brand = if app.is_dark {
-                BRAND_BLUE_LIGHT
-            } else {
-                BRAND_BLUE
-            };
-            SetTextColor(hdc, COLORREF(brand));
+            SetTextColor(hdc, COLORREF(p.subtext));
             DrawTextW(
                 hdc,
                 &mut hdr,
@@ -1414,45 +1529,58 @@ unsafe extern "system" fn sidebar_proc(
                 DT_SINGLELINE | DT_VCENTER | DT_LEFT,
             );
 
-            let top0 = 32;
+            let top0 = 36;
             for (i, d) in app.drives.iter().enumerate() {
                 let cy = top0 + i as i32 * (DRIVE_CARD_H + DRIVE_CARD_GAP);
                 let card_rc = RECT {
-                    left: 10,
+                    left: 12,
                     top: cy,
-                    right: rc.right - 10,
+                    right: rc.right - 12,
                     bottom: cy + DRIVE_CARD_H,
                 };
                 let is_active = app.active_drive == i as i32;
-                let cb = CreateSolidBrush(COLORREF(if is_active { sel } else { card }));
-                FillRect(hdc, &card_rc, cb);
-                let _ = DeleteObject(cb);
-                if is_active {
-                    // Brand accent bar down the card's left edge.
-                    let acc = RECT {
-                        right: card_rc.left + 3,
-                        ..card_rc
-                    };
-                    let ab = CreateSolidBrush(COLORREF(BRAND_BLUE));
-                    FillRect(hdc, &acc, ab);
-                    let _ = DeleteObject(ab);
-                }
+                // White rounded card; the active card gets a 2px blue border.
+                let (border, bw) = if is_active {
+                    (p.blue, 2)
+                } else {
+                    (p.hairline, 1)
+                };
+                card_round(hdc, &card_rc, 10, p.card_bg, border, bw);
 
-                let lx = card_rc.left + 12;
-                // Drive title: "C:\  Windows".
-                let name = format!(
-                    "{}:\\  {}",
-                    d.letter,
-                    if d.label.is_empty() { "" } else { &d.label }
+                // Drive glyph (Segoe MDL2 "Hard drive").
+                let gx = card_rc.left + 14;
+                SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+                let mut glyph: Vec<u16> = "\u{EDA2}".encode_utf16().collect();
+                let mut grc = RECT {
+                    left: gx,
+                    top: cy + 8,
+                    right: gx + 22,
+                    bottom: cy + 30,
+                };
+                SetTextColor(hdc, COLORREF(p.text));
+                DrawTextW(
+                    hdc,
+                    &mut glyph,
+                    &mut grc,
+                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
                 );
+
+                let lx = gx + 30;
+                // Drive title: "C: — Windows".
+                let name = if d.label.is_empty() {
+                    format!("{}:", d.letter)
+                } else {
+                    format!("{}: — {}", d.letter, d.label)
+                };
                 let mut nw: Vec<u16> = name.encode_utf16().collect();
+                SelectObject(hdc, HGDIOBJ(app.font_small.0));
                 let mut nrc = RECT {
                     left: lx,
-                    top: cy + 7,
-                    right: card_rc.right - 10,
-                    bottom: cy + 25,
+                    top: cy + 8,
+                    right: card_rc.right - 12,
+                    bottom: cy + 28,
                 };
-                SetTextColor(hdc, COLORREF(text));
+                SetTextColor(hdc, COLORREF(p.text));
                 DrawTextW(
                     hdc,
                     &mut nw,
@@ -1460,33 +1588,26 @@ unsafe extern "system" fn sidebar_proc(
                     DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
                 );
 
-                // Usage bar.
+                // Usage bar (rounded, blue fill on a light track).
                 let total = d.total_bytes.max(1);
                 let used = total.saturating_sub(d.free_bytes);
                 let frac = (used as f64 / total as f64).clamp(0.0, 1.0);
+                let bl = card_rc.left + 14;
+                let br_x = card_rc.right - 14;
                 let bar = RECT {
-                    left: lx,
-                    top: cy + 30,
-                    right: card_rc.right - 12,
-                    bottom: cy + 38,
+                    left: bl,
+                    top: cy + 32,
+                    right: br_x,
+                    bottom: cy + 40,
                 };
-                let track = if app.is_dark {
-                    0x0045_4545u32
-                } else {
-                    0x00E2_E2E2u32
-                };
-                let trb = CreateSolidBrush(COLORREF(track));
-                FillRect(hdc, &bar, trb);
-                let _ = DeleteObject(trb);
+                fill_round(hdc, &bar, 4, p.track);
                 let fw = ((bar.right - bar.left) as f64 * frac).round() as i32;
-                if fw > 0 {
+                if fw >= 4 {
                     let fill = RECT {
                         right: bar.left + fw,
                         ..bar
                     };
-                    let fb = CreateSolidBrush(COLORREF(BRAND_BLUE_LIGHT));
-                    FillRect(hdc, &fill, fb);
-                    let _ = DeleteObject(fb);
+                    fill_round(hdc, &fill, 4, p.blue);
                 }
 
                 // "216 GB / 238 GB · 91%".
@@ -1498,12 +1619,12 @@ unsafe extern "system" fn sidebar_proc(
                 );
                 let mut uw: Vec<u16> = usage.encode_utf16().collect();
                 let mut urc = RECT {
-                    left: lx,
-                    top: cy + 40,
-                    right: card_rc.right - 10,
+                    left: bl,
+                    top: cy + 42,
+                    right: card_rc.right - 12,
                     bottom: cy + DRIVE_CARD_H - 4,
                 };
-                SetTextColor(hdc, COLORREF(sub));
+                SetTextColor(hdc, COLORREF(p.subtext));
                 DrawTextW(
                     hdc,
                     &mut uw,
@@ -1559,11 +1680,8 @@ unsafe extern "system" fn crumb_proc(
             let hdc = BeginPaint(hwnd, &mut ps);
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
-            let (bg, fg) = if app.is_dark {
-                (0x0020_2020u32, 0x00D0_D0D0u32)
-            } else {
-                (0x00FF_FFFFu32, 0x0040_4040u32)
-            };
+            let p = palette(app.is_dark);
+            let (bg, fg) = (p.card_bg, p.text);
             let b = CreateSolidBrush(COLORREF(bg));
             FillRect(hdc, &rc, b);
             let _ = DeleteObject(b);
@@ -1597,12 +1715,8 @@ unsafe extern "system" fn crumb_proc(
 
             SetBkMode(hdc, TRANSPARENT);
             SelectObject(hdc, HGDIOBJ(app.font_small.0));
-            let brand = if app.is_dark {
-                BRAND_BLUE_LIGHT
-            } else {
-                BRAND_BLUE
-            };
-            let mut x = 12;
+            let brand = p.blue;
+            let mut x = 14;
             for (i, (name, hti)) in chain.iter().enumerate() {
                 if i > 0 {
                     let mut sep: Vec<u16> = "  \u{203A}  ".encode_utf16().collect();
@@ -1645,6 +1759,23 @@ unsafe extern "system" fn crumb_proc(
                 app.crumb_segs.push((x, x + segw, *hti));
                 x += segw;
             }
+            // Right-aligned muted hint, matching the mockup.
+            let mut hint: Vec<u16> = "Folders (sorted by size)  ·  double-click to drill in"
+                .encode_utf16()
+                .collect();
+            let mut hrc = RECT {
+                left: x + 20,
+                top: 0,
+                right: rc.right - 14,
+                bottom: rc.bottom,
+            };
+            SetTextColor(hdc, COLORREF(p.subtext));
+            DrawTextW(
+                hdc,
+                &mut hint,
+                &mut hrc,
+                DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS,
+            );
             let _ = EndPaint(hwnd, &ps);
             LRESULT(0)
         }
@@ -1802,7 +1933,8 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     )
     .expect("listview");
 
-    let ext = (LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER) as isize;
+    // No gridlines — the mockup uses clean rows with only subtle separators.
+    let ext = (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER) as isize;
     SendMessageW(
         app.list,
         LVM_SETEXTENDEDLISTVIEWSTYLE,
@@ -1813,6 +1945,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     // ---- Struis ICT redesign chrome: fonts + top bar + sidebar + breadcrumb ----
     app.font_title = make_font(-22, 700); // bold "ClutterCutter"
     app.font_small = make_font(-13, 600); // labels / subtitle
+    app.font_icon = make_font_face(-15, 400, "Segoe MDL2 Assets"); // glyph icons
     let app_lp = app as *mut AppState as isize;
 
     let topbar_class = w!("ClutterCutterTop");
@@ -2047,13 +2180,13 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     // Columns mirror the Struis ICT design: Name, a custom-drawn "% of parent"
     // bar, then the numeric/date detail columns. Keep MAIN_FIXED_COLS_W in sync
     // with the fixed widths below (everything except the stretching Name column).
-    insert_column(app.list, 0, "Name", 320, false);
-    insert_column(app.list, 1, "% of parent", 128, false);
-    insert_column(app.list, 2, "Size", 90, true);
-    insert_column(app.list, 3, "Own size", 90, true);
-    insert_column(app.list, 4, "Files", 80, true);
-    insert_column(app.list, 5, "Folders", 80, true);
-    insert_column(app.list, 6, "Modified", 120, false);
+    insert_column(app.list, 0, "NAME", 320, false);
+    insert_column(app.list, 1, "% OF PARENT", 128, false);
+    insert_column(app.list, 2, "SIZE", 90, true);
+    insert_column(app.list, 3, "OWN SIZE", 90, true);
+    insert_column(app.list, 4, "FILES", 80, true);
+    insert_column(app.list, 5, "FOLDERS", 80, true);
+    insert_column(app.list, 6, "MODIFIED", 120, false);
 
     let status_initial = if app.is_admin {
         "Ready (Administrator — MFT fast path available on NTFS drives)"
@@ -2111,6 +2244,7 @@ unsafe extern "system" fn status_proc(
     if app_ptr.is_null() {
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
+    let app = &*app_ptr;
     match msg {
         WM_ERASEBKGND => LRESULT(1),
         WM_PAINT => {
@@ -2118,24 +2252,24 @@ unsafe extern "system" fn status_proc(
             let hdc = BeginPaint(hwnd, &mut ps);
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
-            // Struis ICT branded status strip: brand blue with white text in both
-            // themes, topped by a thin light-blue accent line.
-            let (bg, fg): (u32, u32) = (BRAND_BLUE, BRAND_ON_BLUE);
-            let brush = CreateSolidBrush(COLORREF(bg));
+            // Light status strip (matches the mockup): window-bg fill, a top
+            // hairline, dark message on the left and muted stats on the right.
+            let p = palette(app.is_dark);
+            let brush = CreateSolidBrush(COLORREF(p.win_bg));
             FillRect(hdc, &rc, brush);
             let _ = DeleteObject(brush);
             let accent = RECT {
-                bottom: rc.top + 2,
+                bottom: rc.top + 1,
                 ..rc
             };
-            let accent_brush = CreateSolidBrush(COLORREF(BRAND_BLUE_LIGHT));
+            let accent_brush = CreateSolidBrush(COLORREF(p.hairline));
             FillRect(hdc, &accent, accent_brush);
             let _ = DeleteObject(accent_brush);
             let mut buf = [0u16; 1024];
             let len = GetWindowTextW(hwnd, &mut buf) as usize;
             if len > 0 {
                 SetBkMode(hdc, TRANSPARENT);
-                SetTextColor(hdc, COLORREF(fg));
+                SelectObject(hdc, HGDIOBJ(app.font_small.0));
                 // A tab separates the left message from the right-aligned stats
                 // block; either part may be empty. Draw them independently.
                 let tab = buf[..len].iter().position(|&c| c == b'\t' as u16);
@@ -2144,8 +2278,9 @@ unsafe extern "system" fn status_proc(
                     None => (&buf[..len], &[]),
                 };
                 if !left.is_empty() {
+                    SetTextColor(hdc, COLORREF(p.text));
                     let mut lrc = RECT {
-                        left: 8,
+                        left: 14,
                         top: 0,
                         right: rc.right - 8,
                         bottom: rc.bottom,
@@ -2159,10 +2294,11 @@ unsafe extern "system" fn status_proc(
                     );
                 }
                 if !right.is_empty() {
+                    SetTextColor(hdc, COLORREF(p.subtext));
                     let mut rrc = RECT {
                         left: 8,
                         top: 0,
-                        right: rc.right - 12,
+                        right: rc.right - 14,
                         bottom: rc.bottom,
                     };
                     let mut rbuf = right.to_vec();
@@ -3584,28 +3720,29 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
         bottom: PANEL_HEADER_H,
         ..rc
     };
-    // Struis ICT branded panel header: brand blue with white text in both themes,
-    // underlined by a thin light-blue accent line.
-    let (bg, fg): (u32, u32) = (BRAND_BLUE, BRAND_ON_BLUE);
-    let brush = CreateSolidBrush(COLORREF(bg));
+    // Light panel header (matches the mockup): panel-bg fill, dark title,
+    // bottom hairline.
+    let p = palette(app.is_dark);
+    let brush = CreateSolidBrush(COLORREF(p.panel_bg));
     FillRect(hdc, &header, brush);
     let _ = DeleteObject(brush);
     let accent = RECT {
-        top: PANEL_HEADER_H - 2,
+        top: PANEL_HEADER_H - 1,
         bottom: PANEL_HEADER_H,
         ..header
     };
-    let accent_brush = CreateSolidBrush(COLORREF(BRAND_BLUE_LIGHT));
+    let accent_brush = CreateSolidBrush(COLORREF(p.hairline));
     FillRect(hdc, &accent, accent_brush);
     let _ = DeleteObject(accent_brush);
 
     SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, COLORREF(fg));
+    SetTextColor(hdc, COLORREF(p.text));
+    let old = SelectObject(hdc, HGDIOBJ(app.font_small.0));
     // Clamp the title to the left of the leftmost button so they never overlap,
     // whatever the panel width or which buttons are shown.
     let title_right = (header_buttons_left_x(app, rc.right) - PANEL_BTN_GAP).max(8);
     let mut text_rc = RECT {
-        left: 8,
+        left: 12,
         top: 0,
         right: title_right,
         bottom: PANEL_HEADER_H,
@@ -3617,6 +3754,7 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
         &mut text_rc,
         DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
     );
+    SelectObject(hdc, old);
     let _ = EndPaint(panel, &ps);
 }
 
