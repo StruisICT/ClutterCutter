@@ -28,11 +28,12 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColorBrush,
-    GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow, ReleaseDC, ScreenToClient,
-    SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE, DT_CENTER, DT_END_ELLIPSIS,
-    DT_HIDEPREFIX, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, PAINTSTRUCT, RDW_ALLCHILDREN,
-    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, TRANSPARENT,
+    BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
+    GetSysColor, GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow,
+    ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE,
+    COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX,
+    DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT,
+    RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -50,20 +51,23 @@ use windows::Win32::System::Registry::{
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
-    InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, ICC_BAR_CLASSES,
-    ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX,
-    LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW,
-    LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMW,
-    LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
+    InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, CDDS_ITEMPREPAINT, CDDS_PREPAINT,
+    CDDS_SUBITEM, CDIS_SELECTED, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
+    CDRF_SKIPDEFAULT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
+    ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT,
+    LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN,
+    LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM,
+    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
     LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
     LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES, LVS_REPORT,
-    LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NM_DBLCLK, NM_RCLICK, TASKDIALOGCONFIG,
-    TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
-    TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN, TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET,
-    TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
-    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
-    TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
-    TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK,
+    TASKDIALOGCONFIG, TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON,
+    TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN,
+    TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE,
+    TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW,
+    TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
+    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
+    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
@@ -74,21 +78,21 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
-    CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
-    GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
+    CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawIconEx, DrawMenuBar,
+    GetClientRect, GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, LoadCursorW,
     LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
     SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
     SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
-    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA,
-    HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND,
-    MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
-    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE,
-    WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW,
-    WS_TABSTOP, WS_VISIBLE,
+    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, DI_NORMAL, FVIRTKEY,
+    GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO,
+    MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU,
+    SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+    SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR,
+    WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
+    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -102,7 +106,27 @@ const ID_TREE: u16 = 301;
 const ID_SIDE_LIST: u16 = 303;
 const ID_PANEL: u16 = 304;
 const ID_SPLITTER: u16 = 305;
+const ID_TOPBAR: u16 = 306;
+const ID_SIDEBAR: u16 = 307;
+const ID_CRUMB: u16 = 308;
 const ID_STATUS: u16 = 400;
+
+// Struis ICT brand palette (from the house stylesheet). COLORREF is 0x00BBGGRR,
+// so the RGB hex is byte-swapped: #0F3695 -> 0x00953_60F, #4496C8 -> 0x00C89644.
+const BRAND_BLUE: u32 = 0x0095_360F; // #0F3695 primary dark blue
+const BRAND_BLUE_LIGHT: u32 = 0x00C8_9644; // #4496C8 accent light blue
+const BRAND_ON_BLUE: u32 = 0x00FF_FFFF; // #FFFFFF text on brand blue
+
+// Sum of the fixed main-list column widths (everything except the stretching
+// Name column): 128 + 90 + 90 + 80 + 80 + 120. Keep in sync with insert_column.
+const MAIN_FIXED_COLS_W: i32 = 128 + 90 + 90 + 80 + 80 + 120;
+
+// Struis ICT redesign geometry.
+const TOPBAR_H: i32 = 50; // branded strip: logo + title + theme pill
+const SIDEBAR_W: i32 = 244; // left DRIVES column
+const CRUMB_H: i32 = 30; // breadcrumb path bar above the table
+const DRIVE_CARD_H: i32 = 62; // one drive card
+const DRIVE_CARD_GAP: i32 = 8;
 
 // Side panel geometry
 const PANEL_W: i32 = 420;
@@ -240,6 +264,22 @@ struct AppState {
     list: HWND,
     status: HWND,
 
+    // Struis ICT redesign chrome: the branded top bar (logo + title + theme
+    // pill), the left DRIVES sidebar of usage-bar cards, and the breadcrumb path
+    // bar above the table. The folder tree above is kept but hidden — it still
+    // holds navigation state that double-click / breadcrumb clicks drive.
+    topbar: HWND,
+    sidebar: HWND,
+    crumb: HWND,
+    font_title: HFONT,
+    font_small: HFONT,
+    // Index into `drives` of the drive whose scan is shown (-1 = all drives),
+    // for highlighting the active sidebar card.
+    active_drive: i32,
+    // Clickable breadcrumb segments: (left x, right x, HTREEITEM) recorded on
+    // paint, consumed by the crumb's click hit-test.
+    crumb_segs: Vec<(i32, i32, isize)>,
+
     // Side panel: container (child of main or of the floating frame when
     // detached), its header buttons, the listview that hosts the file-based
     // side views, and the floating frame itself (created lazily).
@@ -257,6 +297,8 @@ struct AppState {
     panel_frac: f64,
 
     scanning: bool,
+    // When the current scan started, for the elapsed-time stat in the status bar.
+    scan_start: Option<std::time::Instant>,
     cancel: Arc<AtomicBool>,
     shared: Arc<Mutex<ScanState>>,
     is_admin: bool,
@@ -271,6 +313,9 @@ struct AppState {
     populated: HashSet<isize>,
     // Path of the FolderNode currently selected in the tree (for context menu).
     selected_node: isize,
+    // Fraction 0..1 of each main-list row's size relative to its parent, indexed
+    // by row. Used to custom-draw the "% of parent" bar column.
+    list_pct: Vec<f32>,
     // Last scan request — remembered so F5 re-scans the same target.
     last_scan: Option<ScanRequest>,
     theme_mode: ThemeMode,
@@ -363,6 +408,13 @@ pub fn run() {
             tree: HWND::default(),
             list: HWND::default(),
             status: HWND::default(),
+            topbar: HWND::default(),
+            sidebar: HWND::default(),
+            crumb: HWND::default(),
+            font_title: HFONT::default(),
+            font_small: HFONT::default(),
+            active_drive: -1,
+            crumb_segs: Vec::new(),
             panel: HWND::default(),
             side_list: HWND::default(),
             btn_detach: HWND::default(),
@@ -373,6 +425,7 @@ pub fn run() {
             detached: false,
             ctx_target: CtxTarget::MainList,
             scanning: false,
+            scan_start: None,
             cancel: Arc::new(AtomicBool::new(false)),
             shared: Arc::new(Mutex::new(ScanState::default())),
             is_admin: IsUserAnAdmin().as_bool(),
@@ -380,6 +433,7 @@ pub fn run() {
             item_by_node: HashMap::new(),
             populated: HashSet::new(),
             selected_node: 0,
+            list_pct: Vec::new(),
             last_scan: None,
             theme_mode: ThemeMode::Auto,
             is_dark: false,
@@ -663,6 +717,8 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
         ID_BTN_RECYCLE_ALL => recycle_all_temp(hwnd, app),
         ID_SCAN_ALL_BTN => {
             if !app.scanning {
+                app.active_drive = -1;
+                let _ = InvalidateRect(app.sidebar, None, false);
                 start_scan_all(hwnd, app);
             }
         }
@@ -837,6 +893,9 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
             let idx = (id - ID_DRIVE_BASE) as usize;
             if let Some(drive) = app.drives.get(idx).cloned() {
                 let use_mft = drive.is_ntfs && app.is_admin;
+                // Highlight this card as the active drive in the sidebar.
+                app.active_drive = idx as i32;
+                let _ = InvalidateRect(app.sidebar, None, false);
                 start_scan(hwnd, app, drive.root, use_mft);
             }
         }
@@ -846,6 +905,14 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
 
 unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
     let hdr = &*(lparam.0 as *const NMHDR);
+    // Owner-draw the main list's "% of parent" bar column.
+    if hdr.hwndFrom == app.list && hdr.code == NM_CUSTOMDRAW {
+        return custom_draw_main_list(app, lparam.0 as *const NMLVCUSTOMDRAW);
+    }
+    // Owner-draw the side panel's Size column as a brand-blue badge.
+    if hdr.hwndFrom == app.side_list && hdr.code == NM_CUSTOMDRAW {
+        return custom_draw_side_list(app, lparam.0 as *const NMLVCUSTOMDRAW);
+    }
     if hdr.hwndFrom == app.tree {
         match hdr.code {
             c if c == TVN_SELCHANGEDW => {
@@ -899,6 +966,707 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
         }
     }
     LRESULT(0)
+}
+
+// Column index of the custom-drawn "% of parent" bar in the main list.
+const PCT_COL: i32 = 1;
+
+// Owner-draws the "% of parent" column as a proportional bar plus a percentage
+// label, in the Struis ICT accent blue. Every other subitem is left to the
+// default list rendering.
+unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LRESULT {
+    let lv = &*lv;
+    let stage = lv.nmcd.dwDrawStage.0;
+    if stage == CDDS_PREPAINT.0 {
+        return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
+    }
+    if stage == CDDS_ITEMPREPAINT.0 {
+        return LRESULT(CDRF_NOTIFYSUBITEMDRAW as isize);
+    }
+    if stage != (CDDS_SUBITEM.0 | CDDS_ITEMPREPAINT.0) || lv.iSubItem != PCT_COL {
+        return LRESULT(CDRF_DODEFAULT as isize);
+    }
+
+    let row = lv.nmcd.dwItemSpec;
+    let pct = app
+        .list_pct
+        .get(row)
+        .copied()
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    let hdc = lv.nmcd.hdc;
+    let rc = lv.nmcd.rc;
+    let selected = (lv.nmcd.uItemState.0 & CDIS_SELECTED.0) != 0;
+
+    // Cell background matches the default row: system highlight when selected,
+    // else the themed list background.
+    let (bg, fg) = if selected {
+        (
+            GetSysColor(COLOR_HIGHLIGHT),
+            GetSysColor(COLOR_HIGHLIGHTTEXT),
+        )
+    } else if app.is_dark {
+        (0x0020_2020u32, 0x00E0_E0E0u32)
+    } else {
+        (0x00FF_FFFFu32, 0x0000_0000u32)
+    };
+    let bgb = CreateSolidBrush(COLORREF(bg));
+    FillRect(hdc, &rc, bgb);
+    let _ = DeleteObject(bgb);
+
+    // Reserve the right strip for the percentage text; the bar fills the rest.
+    let text_w = 52;
+    let bar_left = rc.left + 8;
+    let bar_right = rc.right - text_w - 4;
+    let bar_h = 10;
+    let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
+    if bar_right - bar_left > 16 {
+        let track = RECT {
+            left: bar_left,
+            top: bar_top,
+            right: bar_right,
+            bottom: bar_top + bar_h,
+        };
+        let track_col = if app.is_dark {
+            0x0045_4545u32
+        } else {
+            0x00E2_E2E2u32
+        };
+        let tb = CreateSolidBrush(COLORREF(track_col));
+        FillRect(hdc, &track, tb);
+        let _ = DeleteObject(tb);
+        let fill_w = ((bar_right - bar_left) as f32 * pct).round() as i32;
+        if fill_w > 0 {
+            let fill = RECT {
+                left: bar_left,
+                top: bar_top,
+                right: bar_left + fill_w,
+                bottom: bar_top + bar_h,
+            };
+            let fb = CreateSolidBrush(COLORREF(BRAND_BLUE_LIGHT));
+            FillRect(hdc, &fill, fb);
+            let _ = DeleteObject(fb);
+        }
+    }
+
+    let mut txt: Vec<u16> = format!("{:.1}%", pct * 100.0).encode_utf16().collect();
+    let mut trc = RECT {
+        left: rc.right - text_w - 2,
+        top: rc.top,
+        right: rc.right - 6,
+        bottom: rc.bottom,
+    };
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, COLORREF(fg));
+    DrawTextW(
+        hdc,
+        &mut txt,
+        &mut trc,
+        DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
+    );
+    LRESULT(CDRF_SKIPDEFAULT as isize)
+}
+
+// Side-list Size column index (subitem 1 in every side view).
+const SIDE_SIZE_COL: i32 = 1;
+
+// Owner-draws the side panel's Size column as a right-aligned brand-blue badge
+// with white text, matching the Struis ICT design's file panel.
+unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LRESULT {
+    let lv = &*lv;
+    let stage = lv.nmcd.dwDrawStage.0;
+    if stage == CDDS_PREPAINT.0 {
+        return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
+    }
+    if stage == CDDS_ITEMPREPAINT.0 {
+        return LRESULT(CDRF_NOTIFYSUBITEMDRAW as isize);
+    }
+    if stage != (CDDS_SUBITEM.0 | CDDS_ITEMPREPAINT.0) || lv.iSubItem != SIDE_SIZE_COL {
+        return LRESULT(CDRF_DODEFAULT as isize);
+    }
+
+    let row = lv.nmcd.dwItemSpec;
+    let hdc = lv.nmcd.hdc;
+    let rc = lv.nmcd.rc;
+    let selected = (lv.nmcd.uItemState.0 & CDIS_SELECTED.0) != 0;
+    let bg = if selected {
+        GetSysColor(COLOR_HIGHLIGHT)
+    } else if app.is_dark {
+        0x0020_2020u32
+    } else {
+        0x00FF_FFFFu32
+    };
+    let bgb = CreateSolidBrush(COLORREF(bg));
+    FillRect(hdc, &rc, bgb);
+    let _ = DeleteObject(bgb);
+
+    // Read the Size subitem text into a badge.
+    let mut buf = [0u16; 64];
+    let mut it = LVITEMW {
+        iSubItem: SIDE_SIZE_COL,
+        pszText: PWSTR(buf.as_mut_ptr()),
+        cchTextMax: buf.len() as i32,
+        ..Default::default()
+    };
+    let len = SendMessageW(
+        app.side_list,
+        LVM_GETITEMTEXTW,
+        WPARAM(row),
+        LPARAM(&mut it as *mut _ as isize),
+    )
+    .0 as usize;
+    if len == 0 {
+        return LRESULT(CDRF_SKIPDEFAULT as isize);
+    }
+
+    SetBkMode(hdc, TRANSPARENT);
+    let mut txt = buf[..len.min(buf.len())].to_vec();
+    let mut calc = RECT::default();
+    DrawTextW(hdc, &mut txt, &mut calc, DT_CALCRECT | DT_SINGLELINE);
+    let tw = calc.right - calc.left;
+    let badge_h = 18;
+    let badge_w = tw + 16;
+    let by = rc.top + ((rc.bottom - rc.top) - badge_h) / 2;
+    let bx_right = rc.right - 6;
+    let badge = RECT {
+        left: (bx_right - badge_w).max(rc.left + 2),
+        top: by,
+        right: bx_right,
+        bottom: by + badge_h,
+    };
+    let bb = CreateSolidBrush(COLORREF(BRAND_BLUE));
+    FillRect(hdc, &badge, bb);
+    let _ = DeleteObject(bb);
+    let mut brc = badge;
+    SetTextColor(hdc, COLORREF(BRAND_ON_BLUE));
+    DrawTextW(
+        hdc,
+        &mut txt,
+        &mut brc,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+    );
+    LRESULT(CDRF_SKIPDEFAULT as isize)
+}
+
+unsafe fn make_font(height: i32, weight: i32) -> HFONT {
+    let face: Vec<u16> = "Segoe UI\0".encode_utf16().collect();
+    // Segoe UI stands in for the brand's Raleway (not installed on Windows).
+    // Charset/precision/pitch left at defaults; quality = CLEARTYPE_QUALITY (5).
+    CreateFontW(
+        height,
+        0,
+        0,
+        0,
+        weight,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        5,
+        0,
+        PCWSTR(face.as_ptr()),
+    )
+}
+
+// Chrome colours for the redesigned surfaces, per theme:
+// (window bg, card/panel bg, selected bg, primary text, secondary text, hairline).
+fn chrome_colors(is_dark: bool) -> (u32, u32, u32, u32, u32, u32) {
+    if is_dark {
+        (
+            0x0026_2626,
+            0x0030_3030,
+            0x003A_3320,
+            0x00F0_F0F0,
+            0x00A8_A8A8,
+            0x003A_3A3A,
+        )
+    } else {
+        (
+            0x00F5_F3F1,
+            0x00FF_FFFF,
+            0x00F4_E4D2,
+            0x0020_2020,
+            0x0070_7070,
+            0x00DC_DCDC,
+        )
+    }
+}
+
+// The theme-toggle pill rectangle, right-aligned within the top bar's client rect.
+fn pill_rect(client: &RECT) -> RECT {
+    let w = 92;
+    let h = 28;
+    let right = client.right - 16;
+    let top = (client.bottom - h) / 2;
+    RECT {
+        left: right - w,
+        top,
+        right,
+        bottom: top + h,
+    }
+}
+
+// Branded top bar: logo mark + "ClutterCutter" / "Struis ICT", theme pill on the right.
+unsafe extern "system" fn topbar_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let (bg, _card, _sel, text, sub, line) = chrome_colors(app.is_dark);
+
+            let b = CreateSolidBrush(COLORREF(bg));
+            FillRect(hdc, &rc, b);
+            let _ = DeleteObject(b);
+            // Bottom hairline.
+            let hair = RECT {
+                top: rc.bottom - 1,
+                ..rc
+            };
+            let hb = CreateSolidBrush(COLORREF(line));
+            FillRect(hdc, &hair, hb);
+            let _ = DeleteObject(hb);
+
+            // Logo mark (the app icon) at the left, vertically centred.
+            let icon = load_app_icon();
+            let iy = (rc.bottom - 32) / 2;
+            let _ = DrawIconEx(hdc, 14, iy, icon, 32, 32, 0, None, DI_NORMAL);
+
+            SetBkMode(hdc, TRANSPARENT);
+            let x0 = 14 + 32 + 12;
+            // Title.
+            let old = SelectObject(hdc, HGDIOBJ(app.font_title.0));
+            let mut title: Vec<u16> = "ClutterCutter".encode_utf16().collect();
+            let mut calc = RECT::default();
+            DrawTextW(hdc, &mut title, &mut calc, DT_CALCRECT | DT_SINGLELINE);
+            let title_w = calc.right - calc.left;
+            let mut trc = RECT {
+                left: x0,
+                top: 0,
+                right: x0 + title_w + 4,
+                bottom: rc.bottom,
+            };
+            SetTextColor(hdc, COLORREF(text));
+            DrawTextW(
+                hdc,
+                &mut title,
+                &mut trc,
+                DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+            );
+            // Subtitle, in brand blue, to the right of the title.
+            SelectObject(hdc, HGDIOBJ(app.font_small.0));
+            let mut sube: Vec<u16> = "Struis ICT".encode_utf16().collect();
+            let brand = if app.is_dark {
+                BRAND_BLUE_LIGHT
+            } else {
+                BRAND_BLUE
+            };
+            SetTextColor(hdc, COLORREF(brand));
+            let sx = x0 + title_w + 12;
+            let mut src = RECT {
+                left: sx,
+                top: 0,
+                right: rc.right - 120,
+                bottom: rc.bottom,
+            };
+            DrawTextW(
+                hdc,
+                &mut sube,
+                &mut src,
+                DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+            );
+
+            // Theme pill: sun | moon, active half filled in brand blue.
+            let pr = pill_rect(&rc);
+            let track = if app.is_dark {
+                0x0050_5050u32
+            } else {
+                0x00DA_DADAu32
+            };
+            let tb = CreateSolidBrush(COLORREF(track));
+            FillRect(hdc, &pr, tb);
+            let _ = DeleteObject(tb);
+            let mid = (pr.left + pr.right) / 2;
+            let active = RECT {
+                left: if app.is_dark { mid } else { pr.left },
+                right: if app.is_dark { pr.right } else { mid },
+                ..pr
+            };
+            let ab = CreateSolidBrush(COLORREF(BRAND_BLUE));
+            FillRect(hdc, &active, ab);
+            let _ = DeleteObject(ab);
+            // Glyphs.
+            let mut sun: Vec<u16> = "\u{2600}".encode_utf16().collect();
+            let mut moon: Vec<u16> = "\u{263D}".encode_utf16().collect();
+            let mut lrc = RECT {
+                left: pr.left,
+                right: mid,
+                ..pr
+            };
+            let mut rrc = RECT {
+                left: mid,
+                right: pr.right,
+                ..pr
+            };
+            SetTextColor(hdc, COLORREF(if app.is_dark { sub } else { 0x00FF_FFFF }));
+            DrawTextW(
+                hdc,
+                &mut sun,
+                &mut lrc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
+            SetTextColor(hdc, COLORREF(if app.is_dark { 0x00FF_FFFF } else { sub }));
+            DrawTextW(
+                hdc,
+                &mut moon,
+                &mut rrc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
+
+            SelectObject(hdc, old);
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let pr = pill_rect(&rc);
+            if x >= pr.left && x < pr.right && y >= pr.top && y < pr.bottom {
+                let mid = (pr.left + pr.right) / 2;
+                let mode = if x < mid {
+                    ThemeMode::Light
+                } else {
+                    ThemeMode::Dark
+                };
+                apply_theme(app.main_hwnd, app, mode);
+            }
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// Left DRIVES column: owner-drawn usage-bar cards + the reparented Scan-all button.
+unsafe extern "system" fn sidebar_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        // The Scan-all button lives here now; bubble its click up to the main window.
+        WM_COMMAND => {
+            SendMessageW(app.main_hwnd, WM_COMMAND, wparam, lparam);
+            LRESULT(0)
+        }
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let (bg, card, sel, text, sub, _line) = chrome_colors(app.is_dark);
+            let b = CreateSolidBrush(COLORREF(bg));
+            FillRect(hdc, &rc, b);
+            let _ = DeleteObject(b);
+
+            SetBkMode(hdc, TRANSPARENT);
+            SelectObject(hdc, HGDIOBJ(app.font_small.0));
+            // "DRIVES" section header.
+            let mut hdr: Vec<u16> = "DRIVES".encode_utf16().collect();
+            let mut hrc = RECT {
+                left: 16,
+                top: 8,
+                right: rc.right - 12,
+                bottom: 26,
+            };
+            let brand = if app.is_dark {
+                BRAND_BLUE_LIGHT
+            } else {
+                BRAND_BLUE
+            };
+            SetTextColor(hdc, COLORREF(brand));
+            DrawTextW(
+                hdc,
+                &mut hdr,
+                &mut hrc,
+                DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+            );
+
+            let top0 = 32;
+            for (i, d) in app.drives.iter().enumerate() {
+                let cy = top0 + i as i32 * (DRIVE_CARD_H + DRIVE_CARD_GAP);
+                let card_rc = RECT {
+                    left: 10,
+                    top: cy,
+                    right: rc.right - 10,
+                    bottom: cy + DRIVE_CARD_H,
+                };
+                let is_active = app.active_drive == i as i32;
+                let cb = CreateSolidBrush(COLORREF(if is_active { sel } else { card }));
+                FillRect(hdc, &card_rc, cb);
+                let _ = DeleteObject(cb);
+                if is_active {
+                    // Brand accent bar down the card's left edge.
+                    let acc = RECT {
+                        right: card_rc.left + 3,
+                        ..card_rc
+                    };
+                    let ab = CreateSolidBrush(COLORREF(BRAND_BLUE));
+                    FillRect(hdc, &acc, ab);
+                    let _ = DeleteObject(ab);
+                }
+
+                let lx = card_rc.left + 12;
+                // Drive title: "C:\  Windows".
+                let name = format!(
+                    "{}:\\  {}",
+                    d.letter,
+                    if d.label.is_empty() { "" } else { &d.label }
+                );
+                let mut nw: Vec<u16> = name.encode_utf16().collect();
+                let mut nrc = RECT {
+                    left: lx,
+                    top: cy + 7,
+                    right: card_rc.right - 10,
+                    bottom: cy + 25,
+                };
+                SetTextColor(hdc, COLORREF(text));
+                DrawTextW(
+                    hdc,
+                    &mut nw,
+                    &mut nrc,
+                    DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+                );
+
+                // Usage bar.
+                let total = d.total_bytes.max(1);
+                let used = total.saturating_sub(d.free_bytes);
+                let frac = (used as f64 / total as f64).clamp(0.0, 1.0);
+                let bar = RECT {
+                    left: lx,
+                    top: cy + 30,
+                    right: card_rc.right - 12,
+                    bottom: cy + 38,
+                };
+                let track = if app.is_dark {
+                    0x0045_4545u32
+                } else {
+                    0x00E2_E2E2u32
+                };
+                let trb = CreateSolidBrush(COLORREF(track));
+                FillRect(hdc, &bar, trb);
+                let _ = DeleteObject(trb);
+                let fw = ((bar.right - bar.left) as f64 * frac).round() as i32;
+                if fw > 0 {
+                    let fill = RECT {
+                        right: bar.left + fw,
+                        ..bar
+                    };
+                    let fb = CreateSolidBrush(COLORREF(BRAND_BLUE_LIGHT));
+                    FillRect(hdc, &fill, fb);
+                    let _ = DeleteObject(fb);
+                }
+
+                // "216 GB / 238 GB · 91%".
+                let usage = format!(
+                    "{} / {}  ·  {:.0}%",
+                    format_bytes(used as i64),
+                    format_bytes(total as i64),
+                    frac * 100.0
+                );
+                let mut uw: Vec<u16> = usage.encode_utf16().collect();
+                let mut urc = RECT {
+                    left: lx,
+                    top: cy + 40,
+                    right: card_rc.right - 10,
+                    bottom: cy + DRIVE_CARD_H - 4,
+                };
+                SetTextColor(hdc, COLORREF(sub));
+                DrawTextW(
+                    hdc,
+                    &mut uw,
+                    &mut urc,
+                    DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+                );
+            }
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            if app.scanning {
+                return LRESULT(0);
+            }
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let top0 = 32;
+            let stride = DRIVE_CARD_H + DRIVE_CARD_GAP;
+            if y >= top0 {
+                let i = (y - top0) / stride;
+                let within = (y - top0) % stride;
+                if within < DRIVE_CARD_H && (i as usize) < app.drives.len() {
+                    SendMessageW(
+                        app.main_hwnd,
+                        WM_COMMAND,
+                        WPARAM((ID_DRIVE_BASE + i as u16) as usize),
+                        LPARAM(0),
+                    );
+                }
+            }
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// Breadcrumb path bar above the table. Segments come from the hidden tree's
+// parent chain of the current selection; clicking one re-selects that node.
+unsafe extern "system" fn crumb_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let (bg, fg) = if app.is_dark {
+                (0x0020_2020u32, 0x00D0_D0D0u32)
+            } else {
+                (0x00FF_FFFFu32, 0x0040_4040u32)
+            };
+            let b = CreateSolidBrush(COLORREF(bg));
+            FillRect(hdc, &rc, b);
+            let _ = DeleteObject(b);
+
+            app.crumb_segs.clear();
+            // Walk the hidden tree from the current caret up to the root.
+            let caret = SendMessageW(
+                app.tree,
+                TVM_GETNEXTITEM,
+                WPARAM(TVGN_CARET as usize),
+                LPARAM(0),
+            )
+            .0 as isize;
+            let mut chain: Vec<(String, isize)> = Vec::new();
+            let mut hti = caret;
+            while hti != 0 {
+                let lp = tree_item_lparam(app.tree, hti);
+                if lp != 0 {
+                    let n = &*(lp as *const FolderNode);
+                    chain.push((n.name.clone(), hti));
+                }
+                hti = SendMessageW(
+                    app.tree,
+                    TVM_GETNEXTITEM,
+                    WPARAM(TVGN_PARENT as usize),
+                    LPARAM(hti),
+                )
+                .0 as isize;
+            }
+            chain.reverse();
+
+            SetBkMode(hdc, TRANSPARENT);
+            SelectObject(hdc, HGDIOBJ(app.font_small.0));
+            let brand = if app.is_dark {
+                BRAND_BLUE_LIGHT
+            } else {
+                BRAND_BLUE
+            };
+            let mut x = 12;
+            for (i, (name, hti)) in chain.iter().enumerate() {
+                if i > 0 {
+                    let mut sep: Vec<u16> = "  \u{203A}  ".encode_utf16().collect();
+                    let mut calc = RECT::default();
+                    DrawTextW(hdc, &mut sep, &mut calc, DT_CALCRECT | DT_SINGLELINE);
+                    let sw = calc.right - calc.left;
+                    let mut src = RECT {
+                        left: x,
+                        top: 0,
+                        right: x + sw,
+                        bottom: rc.bottom,
+                    };
+                    SetTextColor(hdc, COLORREF(0x0090_9090));
+                    DrawTextW(
+                        hdc,
+                        &mut sep,
+                        &mut src,
+                        DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+                    );
+                    x += sw;
+                }
+                let last = i == chain.len() - 1;
+                let mut seg: Vec<u16> = name.encode_utf16().collect();
+                let mut calc = RECT::default();
+                DrawTextW(hdc, &mut seg, &mut calc, DT_CALCRECT | DT_SINGLELINE);
+                let segw = (calc.right - calc.left).max(8);
+                let mut drc = RECT {
+                    left: x,
+                    top: 0,
+                    right: x + segw,
+                    bottom: rc.bottom,
+                };
+                SetTextColor(hdc, COLORREF(if last { fg } else { brand }));
+                DrawTextW(
+                    hdc,
+                    &mut seg,
+                    &mut drc,
+                    DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+                );
+                app.crumb_segs.push((x, x + segw, *hti));
+                x += segw;
+            }
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let target = app
+                .crumb_segs
+                .iter()
+                .find(|(l, r, _)| x >= *l && x < *r)
+                .map(|(_, _, hti)| *hti);
+            if let Some(hti) = target {
+                SendMessageW(
+                    app.tree,
+                    TVM_SELECTITEM,
+                    WPARAM(TVGN_CARET as usize),
+                    LPARAM(hti),
+                );
+            }
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
 }
 
 unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
@@ -1042,6 +1810,106 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         LPARAM(ext),
     );
 
+    // ---- Struis ICT redesign chrome: fonts + top bar + sidebar + breadcrumb ----
+    app.font_title = make_font(-22, 700); // bold "ClutterCutter"
+    app.font_small = make_font(-13, 600); // labels / subtitle
+    let app_lp = app as *mut AppState as isize;
+
+    let topbar_class = w!("ClutterCutterTop");
+    RegisterClassExW(&WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(topbar_proc),
+        hInstance: hinstance.into(),
+        hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
+        hbrBackground: HBRUSH::default(),
+        lpszClassName: topbar_class,
+        ..Default::default()
+    });
+    app.topbar = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        topbar_class,
+        PCWSTR::null(),
+        WS_CHILD | WS_VISIBLE,
+        0,
+        0,
+        800,
+        TOPBAR_H,
+        hwnd,
+        HMENU(ID_TOPBAR as isize as _),
+        hinstance,
+        None,
+    )
+    .expect("topbar");
+    SetWindowLongPtrW(app.topbar, GWLP_USERDATA, app_lp);
+
+    let sidebar_class = w!("ClutterCutterDrives");
+    RegisterClassExW(&WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(sidebar_proc),
+        hInstance: hinstance.into(),
+        hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
+        hbrBackground: HBRUSH::default(),
+        lpszClassName: sidebar_class,
+        ..Default::default()
+    });
+    app.sidebar = CreateWindowExW(
+        WS_EX_CONTROLPARENT,
+        sidebar_class,
+        PCWSTR::null(),
+        WS_CHILD | WS_VISIBLE,
+        0,
+        TOPBAR_H,
+        SIDEBAR_W,
+        400,
+        hwnd,
+        HMENU(ID_SIDEBAR as isize as _),
+        hinstance,
+        None,
+    )
+    .expect("sidebar");
+    SetWindowLongPtrW(app.sidebar, GWLP_USERDATA, app_lp);
+
+    let crumb_class = w!("ClutterCutterCrumb");
+    RegisterClassExW(&WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(crumb_proc),
+        hInstance: hinstance.into(),
+        hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
+        hbrBackground: HBRUSH::default(),
+        lpszClassName: crumb_class,
+        ..Default::default()
+    });
+    app.crumb = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        crumb_class,
+        PCWSTR::null(),
+        WS_CHILD | WS_VISIBLE,
+        SIDEBAR_W,
+        TOPBAR_H,
+        400,
+        CRUMB_H,
+        hwnd,
+        HMENU(ID_CRUMB as isize as _),
+        hinstance,
+        None,
+    )
+    .expect("crumb");
+    SetWindowLongPtrW(app.crumb, GWLP_USERDATA, app_lp);
+
+    // The horizontal drive-button bar and the folder tree are replaced by the
+    // sidebar + breadcrumb, but kept alive (hidden): the tree still holds the
+    // navigation state that double-click / breadcrumb clicks drive, and the
+    // Scan-all button is reparented into the sidebar so its command still fires.
+    let _ = ShowWindow(app.tree, SW_HIDE);
+    let _ = ShowWindow(app.stop_btn, SW_HIDE);
+    for b in &app.drive_buttons {
+        let _ = ShowWindow(*b, SW_HIDE);
+    }
+    let _ = SetParent(app.scan_all_btn, app.sidebar);
+
     // Side panel — container for the extra views (top files / oldest / temp).
     // Child of the main window while attached; re-parented into the floating
     // frame when detached. Every custom class here finds AppState via its own
@@ -1176,10 +2044,16 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         LPARAM(ext),
     );
 
+    // Columns mirror the Struis ICT design: Name, a custom-drawn "% of parent"
+    // bar, then the numeric/date detail columns. Keep MAIN_FIXED_COLS_W in sync
+    // with the fixed widths below (everything except the stretching Name column).
     insert_column(app.list, 0, "Name", 320, false);
-    insert_column(app.list, 1, "Size", 130, true);
-    insert_column(app.list, 2, "Files", 100, true);
-    insert_column(app.list, 3, "Folders", 100, true);
+    insert_column(app.list, 1, "% of parent", 128, false);
+    insert_column(app.list, 2, "Size", 90, true);
+    insert_column(app.list, 3, "Own size", 90, true);
+    insert_column(app.list, 4, "Files", 80, true);
+    insert_column(app.list, 5, "Folders", 80, true);
+    insert_column(app.list, 6, "Modified", 120, false);
 
     let status_initial = if app.is_admin {
         "Ready (Administrator — MFT fast path available on NTFS drives)"
@@ -1237,7 +2111,6 @@ unsafe extern "system" fn status_proc(
     if app_ptr.is_null() {
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
-    let app = &*app_ptr;
     match msg {
         WM_ERASEBKGND => LRESULT(1),
         WM_PAINT => {
@@ -1245,31 +2118,61 @@ unsafe extern "system" fn status_proc(
             let hdc = BeginPaint(hwnd, &mut ps);
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
-            let (bg, fg): (u32, u32) = if app.is_dark {
-                (0x002B_2B2B, 0x00E0_E0E0)
-            } else {
-                (0x00F0_F0F0, 0x0000_0000)
-            };
+            // Struis ICT branded status strip: brand blue with white text in both
+            // themes, topped by a thin light-blue accent line.
+            let (bg, fg): (u32, u32) = (BRAND_BLUE, BRAND_ON_BLUE);
             let brush = CreateSolidBrush(COLORREF(bg));
             FillRect(hdc, &rc, brush);
             let _ = DeleteObject(brush);
+            let accent = RECT {
+                bottom: rc.top + 2,
+                ..rc
+            };
+            let accent_brush = CreateSolidBrush(COLORREF(BRAND_BLUE_LIGHT));
+            FillRect(hdc, &accent, accent_brush);
+            let _ = DeleteObject(accent_brush);
             let mut buf = [0u16; 1024];
             let len = GetWindowTextW(hwnd, &mut buf) as usize;
             if len > 0 {
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, COLORREF(fg));
-                let mut text_rc = RECT {
-                    left: 8,
-                    top: 0,
-                    right: rc.right - 8,
-                    bottom: rc.bottom,
+                // A tab separates the left message from the right-aligned stats
+                // block; either part may be empty. Draw them independently.
+                let tab = buf[..len].iter().position(|&c| c == b'\t' as u16);
+                let (left, right): (&[u16], &[u16]) = match tab {
+                    Some(i) => (&buf[..i], &buf[i + 1..len]),
+                    None => (&buf[..len], &[]),
                 };
-                DrawTextW(
-                    hdc,
-                    &mut buf[..len],
-                    &mut text_rc,
-                    DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
-                );
+                if !left.is_empty() {
+                    let mut lrc = RECT {
+                        left: 8,
+                        top: 0,
+                        right: rc.right - 8,
+                        bottom: rc.bottom,
+                    };
+                    let mut lbuf = left.to_vec();
+                    DrawTextW(
+                        hdc,
+                        &mut lbuf,
+                        &mut lrc,
+                        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+                    );
+                }
+                if !right.is_empty() {
+                    let mut rrc = RECT {
+                        left: 8,
+                        top: 0,
+                        right: rc.right - 12,
+                        bottom: rc.bottom,
+                    };
+                    let mut rbuf = right.to_vec();
+                    DrawTextW(
+                        hdc,
+                        &mut rbuf,
+                        &mut rrc,
+                        DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS,
+                    );
+                }
             }
             let _ = EndPaint(hwnd, &ps);
             LRESULT(0)
@@ -1394,16 +2297,39 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
         true,
     );
 
-    let top = 80;
+    // Row 0: branded top bar spanning the full width.
+    let _ = MoveWindow(app.topbar, 0, 0, rc.right, TOPBAR_H, true);
+
+    // Row 1: left DRIVES sidebar, then the content area (breadcrumb + table +
+    // optional side panel).
+    let top = TOPBAR_H;
     let body_h = (rc.bottom - top - STATUS_H).max(0);
-    let tree_w = 320;
-    let _ = MoveWindow(app.tree, 0, top, tree_w, body_h, true);
-    // The side panel takes `panel_frac` of the width after the tree, with a
-    // draggable splitter between it and the main list. Because it's a fraction,
-    // the panel grows with the window and the user can drag the split.
+    let _ = MoveWindow(app.sidebar, 0, top, SIDEBAR_W, body_h, true);
+    // The Scan-all button sits at the bottom of the sidebar (its child now).
+    let sab_h = 34;
+    let sab_margin = 12;
+    let _ = MoveWindow(
+        app.scan_all_btn,
+        12,
+        body_h - sab_h - sab_margin,
+        SIDEBAR_W - 24,
+        sab_h,
+        true,
+    );
+
+    let content_x = SIDEBAR_W;
+    let content_w = (rc.right - content_x).max(0);
+    // Breadcrumb spans the content area above the table.
+    let _ = MoveWindow(app.crumb, content_x, top, content_w, CRUMB_H, true);
+
+    let table_top = top + CRUMB_H;
+    let table_h = (body_h - CRUMB_H).max(0);
+    // The side panel takes `panel_frac` of the content width, with a draggable
+    // splitter between it and the table. Because it's a fraction, the panel grows
+    // with the window and the user can drag the split.
     let panel_here = app.side_view != SideView::None && !app.detached;
     let split_w = if panel_here { SPLIT_W } else { 0 };
-    let avail = (rc.right - tree_w).max(0);
+    let avail = content_w;
     let panel_w = if panel_here {
         let raw = (avail as f64 * app.panel_frac).round() as i32;
         // Keep both panes usable.
@@ -1411,17 +2337,24 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     } else {
         0
     };
-    let list_w = (rc.right - tree_w - panel_w - split_w).max(0);
-    let _ = MoveWindow(app.list, tree_w, top, list_w, body_h, true);
+    let list_w = (content_w - panel_w - split_w).max(0);
+    let _ = MoveWindow(app.list, content_x, table_top, list_w, table_h, true);
     if panel_here {
-        let _ = MoveWindow(app.splitter, tree_w + list_w, top, split_w, body_h, true);
+        let _ = MoveWindow(
+            app.splitter,
+            content_x + list_w,
+            table_top,
+            split_w,
+            table_h,
+            true,
+        );
         let _ = ShowWindow(app.splitter, SW_SHOW);
         let _ = MoveWindow(
             app.panel,
-            tree_w + list_w + split_w,
-            top,
+            content_x + list_w + split_w,
+            table_top,
             panel_w,
-            body_h,
+            table_h,
             true,
         );
     } else {
@@ -1430,9 +2363,9 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     // Stretch the Name column so the folder list's columns always fill the
     // list width — otherwise widening the window (which slides the flush-right
     // panel over) leaves a growing block of empty list to the right of the
-    // last column. The other three columns are fixed (130 + 100 + 100).
+    // last column. All columns except Name are fixed (MAIN_FIXED_COLS_W).
     let vscroll = GetSystemMetrics(SM_CXVSCROLL);
-    let name_w = (list_w - 130 - 100 - 100 - vscroll - 4).max(120);
+    let name_w = (list_w - MAIN_FIXED_COLS_W - vscroll - 4).max(120);
     SendMessageW(
         app.list,
         LVM_SETCOLUMNWIDTH,
@@ -1464,6 +2397,7 @@ unsafe fn begin_scan_ui(app: &mut AppState, status_text: &str) {
     set_status(app.status, status_text);
     app.cancel.store(false, Ordering::SeqCst);
     app.scanning = true;
+    app.scan_start = Some(std::time::Instant::now());
     let _ = EnableWindow(app.stop_btn, true);
     let _ = EnableWindow(app.scan_all_btn, false);
     for b in &app.drive_buttons {
@@ -1710,15 +2644,22 @@ unsafe fn finish_scan_all(app: &mut AppState) {
         set_status(app.status, &format!("Scan failed: {msg}"));
         return;
     }
-    let mut summary = format!(
-        "All drives — {} ({} files, {} folders)",
+    let elapsed = app
+        .scan_start
+        .map(|t| format!("  ·  {:.1}s", t.elapsed().as_secs_f64()))
+        .unwrap_or_default();
+    let mut left = "All drives scanned".to_string();
+    if let Some(err) = &app.scan_all_first_err {
+        left.push_str(&format!("  [some skipped: {err}]"));
+    }
+    let summary = format!(
+        "{}\tSize: {}  ·  Files: {}  ·  Folders: {}{}",
+        left,
         format_bytes(root.size),
         format_count(root.file_count),
         format_count(root.folder_count),
+        elapsed,
     );
-    if let Some(err) = &app.scan_all_first_err {
-        summary.push_str(&format!("  [some skipped: {err}]"));
-    }
     set_status(app.status, &summary);
 }
 
@@ -1768,12 +2709,19 @@ unsafe fn on_scan_done(app: &mut AppState) {
         None => return,
     };
 
+    // Two-part status: a left-aligned message and a right-aligned stats block
+    // (split on a tab in status_proc). Matches the branded status strip design.
+    let elapsed = app
+        .scan_start
+        .map(|t| format!("  ·  {:.1}s", t.elapsed().as_secs_f64()))
+        .unwrap_or_default();
     let summary = format!(
-        "{} — {} ({} files, {} folders)",
+        "{} scanned\tSize: {}  ·  Files: {}  ·  Folders: {}{}",
         node.name,
         format_bytes(node.size),
         format_count(node.file_count),
         format_count(node.folder_count),
+        elapsed,
     );
 
     app.root_node = Some(Box::new(node));
@@ -1918,10 +2866,17 @@ unsafe fn on_tree_select(app: &mut AppState) {
     // the list double-click selects a child's tree item, which must be present.
     // populate_children is idempotent (guards on the `populated` set).
     populate_children(app, hti, node);
+    // Refresh the breadcrumb to reflect the new path.
+    let _ = InvalidateRect(app.crumb, None, false);
 }
 
-unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
+unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+    app.list_pct.clear();
+
+    // Percentages are relative to the parent folder's total size; guard the
+    // divide-by-zero for empty folders.
+    let total = node.size.max(1) as f32;
 
     // Subfolders first, then the folder's own files — each group sorted
     // case-insensitively by name. Tombstoned (recycled-in-place) folders are
@@ -1935,19 +2890,24 @@ unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
 
     let mut row = 0i32;
     for k in &folders {
-        // lParam = the FolderNode pointer, so double-click drills into it and
-        // the context menu can act on it.
+        // The "% of parent" cell (subitem 1) is custom-drawn from list_pct; its
+        // stored text stays empty. lParam = the FolderNode pointer, so
+        // double-click drills into it and the context menu can act on it.
         insert_row_with_param(
             app.list,
             row,
             &k.name,
             &[
+                String::new(),
                 format_bytes(k.size),
+                format_bytes(k.own_size),
                 format_count(k.file_count),
                 format_count(k.folder_count),
+                format_filetime(k.last_modified_ft),
             ],
             *k as *const _ as isize,
         );
+        app.list_pct.push(k.size as f32 / total);
         row += 1;
     }
 
@@ -1955,14 +2915,23 @@ unsafe fn populate_list_folders(app: &AppState, node: &FolderNode) {
     files.sort_by_key(|f| f.name.to_lowercase());
     for f in &files {
         // lParam 0 marks a file row: not drillable, and folder-only actions
-        // (drill / open-in-explorer) skip it.
+        // (drill / open-in-explorer) skip it. A file has no own/child breakdown,
+        // so only Size and Modified are filled.
         insert_row_with_param(
             app.list,
             row,
             &f.name,
-            &[format_bytes(f.size), String::new(), String::new()],
+            &[
+                String::new(),
+                format_bytes(f.size),
+                String::new(),
+                String::new(),
+                String::new(),
+                format_filetime(f.last_modified_ft),
+            ],
             0,
         );
+        app.list_pct.push(f.size as f32 / total);
         row += 1;
     }
 }
@@ -2032,6 +3001,7 @@ unsafe fn start_temp_scan(hwnd: HWND, app: &mut AppState) {
     );
     app.cancel.store(false, Ordering::SeqCst);
     app.scanning = true;
+    app.scan_start = Some(std::time::Instant::now());
     let _ = EnableWindow(app.stop_btn, true);
     let _ = EnableWindow(app.scan_all_btn, false);
     for b in &app.drive_buttons {
@@ -2614,14 +3584,20 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
         bottom: PANEL_HEADER_H,
         ..rc
     };
-    let (bg, fg): (u32, u32) = if app.is_dark {
-        (0x002B_2B2B, 0x00E0_E0E0)
-    } else {
-        (0x00F0_F0F0, 0x0000_0000)
-    };
+    // Struis ICT branded panel header: brand blue with white text in both themes,
+    // underlined by a thin light-blue accent line.
+    let (bg, fg): (u32, u32) = (BRAND_BLUE, BRAND_ON_BLUE);
     let brush = CreateSolidBrush(COLORREF(bg));
     FillRect(hdc, &header, brush);
     let _ = DeleteObject(brush);
+    let accent = RECT {
+        top: PANEL_HEADER_H - 2,
+        bottom: PANEL_HEADER_H,
+        ..header
+    };
+    let accent_brush = CreateSolidBrush(COLORREF(BRAND_BLUE_LIGHT));
+    FillRect(hdc, &accent, accent_brush);
+    let _ = DeleteObject(accent_brush);
 
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(fg));
@@ -2707,8 +3683,7 @@ unsafe extern "system" fn splitter_proc(
                 let _ = ScreenToClient(main, &mut pt);
                 let mut rc = RECT::default();
                 let _ = GetClientRect(main, &mut rc);
-                let tree_w = 320;
-                let avail = (rc.right - tree_w).max(1);
+                let avail = (rc.right - SIDEBAR_W).max(1);
                 // The splitter's left edge tracks the cursor; the panel is
                 // everything to its right (minus the splitter width).
                 let panel_w = (rc.right - pt.x - SPLIT_W).clamp(180, (avail - 180).max(180));
@@ -3104,6 +4079,9 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
     }
     let _ = InvalidateRect(app.panel, None, true);
     let _ = InvalidateRect(app.status, None, true);
+    let _ = InvalidateRect(app.topbar, None, false);
+    let _ = InvalidateRect(app.sidebar, None, false);
+    let _ = InvalidateRect(app.crumb, None, false);
 }
 
 // DWM caches the title bar, so flipping DWMWA_USE_IMMERSIVE_DARK_MODE with only
