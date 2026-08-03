@@ -123,10 +123,12 @@ const CRUMB_H: i32 = 30; // breadcrumb path bar above the table
 const DRIVE_CARD_H: i32 = 62; // one drive card
 const DRIVE_CARD_GAP: i32 = 8;
 
-// Side panel geometry
+// Side panel geometry. The header holds a view-switch toolbar row on top and
+// the view title below it.
 const PANEL_W: i32 = 420;
-const PANEL_HEADER_H: i32 = 30;
-// Draggable divider between the main list and the side panel.
+const PANEL_HEADER_H: i32 = 64;
+const PANEL_TOOLBAR_H: i32 = 36; // height of the toolbar row within the header
+                                 // Draggable divider between the main list and the side panel.
 const SPLIT_W: i32 = 6;
 // Header button metrics. Buttons are laid out right-to-left with a uniform gap
 // and the title is clamped to the left of the leftmost button, so nothing
@@ -1486,19 +1488,14 @@ unsafe extern "system" fn topbar_proc(
                 );
             }
 
-            // Theme pill: rounded track with a dark knob on the active side and
-            // Segoe MDL2 sun / moon glyphs.
+            // Theme toggle: a bordered pill "box" with a sliding knob. Both the
+            // sun and moon glyphs sit on the track; a rounded knob slides over the
+            // active side and re-draws that glyph in a contrasting colour.
             let pr = pill_rect(&rc);
             let pill_r = (pr.bottom - pr.top) / 2;
-            fill_round(hdc, &pr, pill_r, p.track);
+            card_round(hdc, &pr, pill_r, p.track, p.subtext, 1);
             let mid = (pr.left + pr.right) / 2;
             let light_active = !app.is_dark;
-            let knob = RECT {
-                left: if light_active { pr.left } else { mid },
-                right: if light_active { mid } else { pr.right },
-                ..pr
-            };
-            fill_round(hdc, &knob, pill_r, 0x001E_1E1E);
             SelectObject(hdc, HGDIOBJ(app.font_icon.0));
             let mut sun: Vec<u16> = "\u{E706}".encode_utf16().collect(); // Brightness
             let mut moon: Vec<u16> = "\u{E708}".encode_utf16().collect(); // QuietHours
@@ -1512,19 +1509,13 @@ unsafe extern "system" fn topbar_proc(
                 right: pr.right,
                 ..pr
             };
-            SetTextColor(
-                hdc,
-                COLORREF(if light_active { 0x00FF_FFFF } else { p.subtext }),
-            );
+            // Both glyphs muted on the track first.
+            SetTextColor(hdc, COLORREF(p.subtext));
             DrawTextW(
                 hdc,
                 &mut sun,
                 &mut lrc,
                 DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-            );
-            SetTextColor(
-                hdc,
-                COLORREF(if light_active { p.subtext } else { 0x00FF_FFFF }),
             );
             DrawTextW(
                 hdc,
@@ -1532,6 +1523,49 @@ unsafe extern "system" fn topbar_proc(
                 &mut rrc,
                 DT_SINGLELINE | DT_VCENTER | DT_CENTER,
             );
+            // Sliding knob over the active side, inset so the track shows around it.
+            let inset = 3;
+            let knob = RECT {
+                left: if light_active {
+                    pr.left + inset
+                } else {
+                    mid + inset / 2
+                },
+                right: if light_active {
+                    mid - inset / 2
+                } else {
+                    pr.right - inset
+                },
+                top: pr.top + inset,
+                bottom: pr.bottom - inset,
+            };
+            let knob_r = (knob.bottom - knob.top) / 2;
+            let (knob_col, on_knob) = if app.is_dark {
+                (0x00E4_E4E4u32, 0x0020_2020u32) // light knob, dark glyph
+            } else {
+                (0x001E_1E1Eu32, 0x00FF_FFFFu32) // dark knob, white glyph
+            };
+            fill_round(hdc, &knob, knob_r, knob_col);
+            SetTextColor(hdc, COLORREF(on_knob));
+            if light_active {
+                let mut s2: Vec<u16> = "\u{E706}".encode_utf16().collect();
+                let mut kr = knob;
+                DrawTextW(
+                    hdc,
+                    &mut s2,
+                    &mut kr,
+                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+                );
+            } else {
+                let mut m2: Vec<u16> = "\u{E708}".encode_utf16().collect();
+                let mut kr = knob;
+                DrawTextW(
+                    hdc,
+                    &mut m2,
+                    &mut kr,
+                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+                );
+            }
 
             SelectObject(hdc, old);
             let _ = EndPaint(hwnd, &ps);
@@ -3858,7 +3892,9 @@ unsafe fn panel_layout(app: &AppState, panel: HWND) {
     let _ = GetClientRect(panel, &mut rc);
     let w = rc.right - rc.left;
     let h = rc.bottom - rc.top;
-    let btn_y = (PANEL_HEADER_H - PANEL_BTN_H) / 2;
+    // Detach / Recycle-all sit in the title row (below the view-switch toolbar).
+    let title_h = PANEL_HEADER_H - PANEL_TOOLBAR_H;
+    let btn_y = PANEL_TOOLBAR_H + (title_h - PANEL_BTN_H) / 2;
     // Detach is rightmost; Recycle-all (temp view only) sits to its left.
     let detach_x = w - PANEL_BTN_GAP - DETACH_BTN_W;
     let _ = MoveWindow(
@@ -3900,6 +3936,33 @@ unsafe fn fit_side_columns(list: HWND) {
     }
 }
 
+// The three view-switch icon buttons in the panel toolbar row (Top largest /
+// Oldest / Safe-to-delete temp), left-aligned.
+fn panel_view_buttons() -> [RECT; 3] {
+    let bw = 44;
+    let bh = 30;
+    let gap = 6;
+    let x0 = 10;
+    let ty = 4;
+    let mk = |i: i32| {
+        let l = x0 + i * (bw + gap);
+        RECT {
+            left: l,
+            top: ty,
+            right: l + bw,
+            bottom: ty + bh,
+        }
+    };
+    [mk(0), mk(1), mk(2)]
+}
+
+// The SideView each toolbar button selects, and its Segoe MDL2 glyph.
+const PANEL_VIEW_BUTTONS: [(SideView, &str); 3] = [
+    (SideView::TopFiles, "\u{E8A5}"),    // Document
+    (SideView::OldestFiles, "\u{E81C}"), // History
+    (SideView::TempFiles, "\u{E74D}"),   // Delete
+];
+
 unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(panel, &mut ps);
@@ -3909,8 +3972,8 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
         bottom: PANEL_HEADER_H,
         ..rc
     };
-    // Light panel header (matches the mockup): panel-bg fill, dark title,
-    // bottom hairline.
+    // Light panel header: panel-bg fill, a view-switch toolbar row, the view
+    // title below it, and a bottom hairline.
     let p = palette(app.is_dark);
     let brush = CreateSolidBrush(COLORREF(p.panel_bg));
     FillRect(hdc, &header, brush);
@@ -3925,14 +3988,37 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
     let _ = DeleteObject(accent_brush);
 
     SetBkMode(hdc, TRANSPARENT);
+
+    // Toolbar buttons; the active view is outlined and coloured in blue.
+    let btns = panel_view_buttons();
+    let old = SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+    for (i, br) in btns.iter().enumerate() {
+        let (view, glyph) = PANEL_VIEW_BUTTONS[i];
+        let active = app.side_view == view;
+        let (border, bw, icon) = if active {
+            (p.blue, 2, p.blue)
+        } else {
+            (p.hairline, 1, p.subtext)
+        };
+        card_round(hdc, br, 6, p.card_bg, border, bw);
+        SetTextColor(hdc, COLORREF(icon));
+        let mut g: Vec<u16> = glyph.encode_utf16().collect();
+        let mut grc = *br;
+        DrawTextW(
+            hdc,
+            &mut g,
+            &mut grc,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        );
+    }
+
+    // View title in the row below the toolbar.
+    SelectObject(hdc, HGDIOBJ(app.font_small.0));
     SetTextColor(hdc, COLORREF(p.text));
-    let old = SelectObject(hdc, HGDIOBJ(app.font_small.0));
-    // Clamp the title to the left of the leftmost button so they never overlap,
-    // whatever the panel width or which buttons are shown.
     let title_right = (header_buttons_left_x(app, rc.right) - PANEL_BTN_GAP).max(8);
     let mut text_rc = RECT {
         left: 12,
-        top: 0,
+        top: PANEL_TOOLBAR_H,
         right: title_right,
         bottom: PANEL_HEADER_H,
     };
@@ -3966,6 +4052,21 @@ unsafe extern "system" fn panel_proc(
         WM_ERASEBKGND => erase_theme_bg(app, hwnd, HDC(wparam.0 as _)),
         WM_PAINT => {
             paint_panel_header(app, hwnd);
+            LRESULT(0)
+        }
+        // Clicks on the view-switch toolbar buttons switch the side view.
+        WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            for (i, br) in panel_view_buttons().iter().enumerate() {
+                if x >= br.left && x < br.right && y >= br.top && y < br.bottom {
+                    let view = PANEL_VIEW_BUTTONS[i].0;
+                    if view != app.side_view {
+                        apply_side_view(app.main_hwnd, app, view);
+                    }
+                    break;
+                }
+            }
             LRESULT(0)
         }
         // The header buttons and the side list are children of the panel, so
