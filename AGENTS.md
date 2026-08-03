@@ -326,9 +326,16 @@ Rust port.
 _Last updated: 2026-08-03._
 
 - Released: **v0.6.0**. A **Struis ICT visual redesign** landed after that
-  (branded top bar + DRIVES sidebar + breadcrumb + custom-drawn table columns +
-  side-panel size badges + brand-blue status/panel chrome) — see the redesign
-  bullet under Feature parity. Not yet released as its own version.
+  (in PR #38, not yet released as its own version). It went through several
+  passes: first the branded chrome, then a **1:1 match to the mockup**
+  `index-selection.png` (light chrome; blue `#2D6BF0` drive/size accents; green
+  `#70BB51` table bars; flat folder/file glyphs; two-line side-panel cards), then
+  UX refinements: the top bar shows **Back/Forward/Up nav buttons** (history in
+  `nav_hist`/`nav_pos`) instead of any logo/wordmark — **no Struis/ClutterCutter
+  branding on the main screen; Struis ICT is named only in the About dialog**.
+  The side panel has a **view-switch toolbar** (Top/Oldest/Temp icon buttons,
+  active outlined in blue) and the theme toggle is a bordered **slider** pill.
+  Theme changes force a synchronous chrome repaint (`RDW_UPDATENOW`).
 - Rust port is at/near parity with the C# app (see Feature parity above). Note
   the C# build has **not** been given the redesign — the Rust build is the one
   that matches the Struis ICT house style now.
