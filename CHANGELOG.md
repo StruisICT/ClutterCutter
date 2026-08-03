@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/StruisICT/ClutterCutter/compare/v0.6.0...v0.7.0) (2026-08-03)
+
+
+### Features
+
+* apply Struis ICT house style to the app UI ([#38](https://github.com/StruisICT/ClutterCutter/issues/38)) ([ecad4f1](https://github.com/StruisICT/ClutterCutter/commit/ecad4f1665d3850596113d39da2cce237b037cc2))
+
 ## [0.6.0](https://github.com/StruisICT/ClutterCutter/compare/v0.5.0...v0.6.0) (2026-08-02)
 
 
