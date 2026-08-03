@@ -123,12 +123,11 @@ const CRUMB_H: i32 = 30; // breadcrumb path bar above the table
 const DRIVE_CARD_H: i32 = 62; // one drive card
 const DRIVE_CARD_GAP: i32 = 8;
 
-// Side panel geometry. The header holds a view-switch toolbar row on top and
-// the view title below it.
+// Side panel geometry. The header is a single row: view-switch buttons, the
+// view title, then the Detach/Recycle buttons.
 const PANEL_W: i32 = 420;
-const PANEL_HEADER_H: i32 = 64;
-const PANEL_TOOLBAR_H: i32 = 36; // height of the toolbar row within the header
-                                 // Draggable divider between the main list and the side panel.
+const PANEL_HEADER_H: i32 = 40;
+// Draggable divider between the main list and the side panel.
 const SPLIT_W: i32 = 6;
 // Header button metrics. Buttons are laid out right-to-left with a uniform gap
 // and the title is clamped to the left of the leftmost button, so nothing
@@ -3892,9 +3891,8 @@ unsafe fn panel_layout(app: &AppState, panel: HWND) {
     let _ = GetClientRect(panel, &mut rc);
     let w = rc.right - rc.left;
     let h = rc.bottom - rc.top;
-    // Detach / Recycle-all sit in the title row (below the view-switch toolbar).
-    let title_h = PANEL_HEADER_H - PANEL_TOOLBAR_H;
-    let btn_y = PANEL_TOOLBAR_H + (title_h - PANEL_BTN_H) / 2;
+    // Single-row header: Detach/Recycle-all are vertically centred at the right.
+    let btn_y = (PANEL_HEADER_H - PANEL_BTN_H) / 2;
     // Detach is rightmost; Recycle-all (temp view only) sits to its left.
     let detach_x = w - PANEL_BTN_GAP - DETACH_BTN_W;
     let _ = MoveWindow(
@@ -3936,14 +3934,14 @@ unsafe fn fit_side_columns(list: HWND) {
     }
 }
 
-// The three view-switch icon buttons in the panel toolbar row (Top largest /
-// Oldest / Safe-to-delete temp), left-aligned.
+// The three view-switch icon buttons at the left of the panel header row (Top
+// largest / Oldest / Safe-to-delete temp).
 fn panel_view_buttons() -> [RECT; 3] {
-    let bw = 44;
-    let bh = 30;
-    let gap = 6;
+    let bw = 38;
+    let bh = 28;
+    let gap = 5;
     let x0 = 10;
-    let ty = 4;
+    let ty = (PANEL_HEADER_H - bh) / 2;
     let mk = |i: i32| {
         let l = x0 + i * (bw + gap);
         RECT {
@@ -4012,13 +4010,14 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
         );
     }
 
-    // View title in the row below the toolbar.
+    // View title, between the view buttons and the Detach/Recycle buttons.
     SelectObject(hdc, HGDIOBJ(app.font_small.0));
     SetTextColor(hdc, COLORREF(p.text));
-    let title_right = (header_buttons_left_x(app, rc.right) - PANEL_BTN_GAP).max(8);
+    let title_left = btns[2].right + 14;
+    let title_right = (header_buttons_left_x(app, rc.right) - PANEL_BTN_GAP).max(title_left);
     let mut text_rc = RECT {
-        left: 12,
-        top: PANEL_TOOLBAR_H,
+        left: title_left,
+        top: 0,
         right: title_right,
         bottom: PANEL_HEADER_H,
     };
