@@ -29,12 +29,12 @@ use windows::Win32::Foundation::{
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
-    FillRect, GetSysColor, GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints,
-    RedrawWindow, ReleaseDC, RoundRect, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
-    UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER,
-    DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC,
-    HFONT, HGDIOBJ, PAINTSTRUCT, PS_SOLID, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
-    TRANSPARENT,
+    FillRect, GetSysColor, GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints, Polygon,
+    Polyline, RedrawWindow, ReleaseDC, RoundRect, ScreenToClient, SelectObject, SetBkMode,
+    SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT,
+    DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER,
+    HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, PS_SOLID, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME,
+    RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -52,15 +52,16 @@ use windows::Win32::System::Registry::{
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
-    InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, CDDS_ITEMPREPAINT, CDDS_PREPAINT,
-    CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT,
-    ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES,
-    INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW,
-    LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER,
-    LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
-    LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE,
-    LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER,
-    LVS_EX_FULLROWSELECT, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW,
+    ImageList_Create, InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, CDDS_ITEMPREPAINT,
+    CDDS_PREPAINT, CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
+    CDRF_SKIPDEFAULT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
+    ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT,
+    LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN,
+    LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW,
+    LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
+    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR,
+    LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
+    LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW,
     NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, TASKDIALOGCONFIG, TASKDIALOGCONFIG_0,
     TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
     TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN, TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET,
@@ -78,21 +79,21 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
-    CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawIconEx, DrawMenuBar,
-    GetClientRect, GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
+    CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
+    GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, LoadCursorW,
-    LoadIconW, LoadImageW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
-    SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW,
-    SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW,
-    TranslateMessage, ACCEL, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    DI_NORMAL, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION,
-    IMAGE_ICON, LR_DEFAULTCOLOR, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN,
-    TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE,
-    WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCACTIVATE,
-    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_BORDER,
-    WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
+    SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
+    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA,
+    HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND,
+    MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
+    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE,
+    WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW,
+    WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -275,6 +276,12 @@ struct AppState {
     // Clickable breadcrumb segments: (left x, right x, HTREEITEM) recorded on
     // paint, consumed by the crumb's click hit-test.
     crumb_segs: Vec<(i32, i32, isize)>,
+    // Back/forward navigation history of visited tree items, and the current
+    // position within it. `nav_lock` suppresses history recording while a
+    // Back/Forward action is programmatically re-selecting an item.
+    nav_hist: Vec<isize>,
+    nav_pos: i32,
+    nav_lock: bool,
 
     // Side panel: container (child of main or of the floating frame when
     // detached), its header buttons, the listview that hosts the file-based
@@ -412,6 +419,9 @@ pub fn run() {
             font_icon: HFONT::default(),
             active_drive: -1,
             crumb_segs: Vec::new(),
+            nav_hist: Vec::new(),
+            nav_pos: -1,
+            nav_lock: false,
             panel: HWND::default(),
             side_list: HWND::default(),
             btn_detach: HWND::default(),
@@ -572,26 +582,6 @@ unsafe fn load_app_icon() -> HICON {
         }
     }
     LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
-}
-
-// Loads the Struis ICT "S" logo mark (resource id 2) at the requested pixel
-// size for the top bar; falls back to the app icon.
-unsafe fn load_logo_icon(size: i32) -> HICON {
-    #[allow(clippy::manual_dangling_ptr)]
-    let ordinal = PCWSTR(2 as *const u16);
-    if let Ok(h) = GetModuleHandleW(None) {
-        if let Ok(handle) = LoadImageW(
-            HINSTANCE(h.0),
-            ordinal,
-            IMAGE_ICON,
-            size,
-            size,
-            LR_DEFAULTCOLOR,
-        ) {
-            return HICON(handle.0);
-        }
-    }
-    load_app_icon()
 }
 
 fn accel(vk: u16, cmd: u16) -> ACCEL {
@@ -1034,35 +1024,15 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     if sub == NAME_COL {
         // Folder rows carry the node pointer in lParam; file rows carry 0.
         let is_folder = list_item_lparam(app.list, row as i32) != 0;
-        // Icon glyph (Segoe MDL2): folder in blue, file in muted grey.
-        let list_font = SelectObject(hdc, HGDIOBJ(app.font_icon.0));
-        let mut glyph: Vec<u16> = if is_folder {
-            "\u{E8B7}".encode_utf16().collect() // Folder
+        // Flat folder (blue) / page (grey) glyph, drawn with GDI.
+        let icx = rc.left + 16;
+        let icy = (rc.top + rc.bottom) / 2;
+        if is_folder {
+            draw_folder_glyph(hdc, icx, icy, if selected { fg } else { p.blue });
         } else {
-            "\u{E8A5}".encode_utf16().collect() // Document
-        };
-        let icon_color = if selected {
-            fg
-        } else if is_folder {
-            p.blue
-        } else {
-            p.subtext
-        };
-        SetTextColor(hdc, COLORREF(icon_color));
-        let mut irc = RECT {
-            left: rc.left + 6,
-            top: rc.top,
-            right: rc.left + 30,
-            bottom: rc.bottom,
-        };
-        DrawTextW(
-            hdc,
-            &mut glyph,
-            &mut irc,
-            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-        );
-        // Name text (restore the list's own font for regular weight).
-        SelectObject(hdc, list_font);
+            let outline = if selected { fg } else { p.subtext };
+            draw_file_glyph(hdc, icx, icy, outline, bg);
+        }
         let mut buf = [0u16; 260];
         let mut it = LVITEMW {
             iSubItem: NAME_COL,
@@ -1142,21 +1112,35 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     LRESULT(CDRF_SKIPDEFAULT as isize)
 }
 
-// Side-list Size column index (subitem 1 in every side view).
-const SIDE_SIZE_COL: i32 = 1;
+// Reads a side-list sub-item's text into a UTF-16 vec.
+unsafe fn side_subitem_text(list: HWND, row: usize, sub: i32) -> Vec<u16> {
+    let mut buf = [0u16; 320];
+    let mut it = LVITEMW {
+        iSubItem: sub,
+        pszText: PWSTR(buf.as_mut_ptr()),
+        cchTextMax: buf.len() as i32,
+        ..Default::default()
+    };
+    let len = SendMessageW(
+        list,
+        LVM_GETITEMTEXTW,
+        WPARAM(row),
+        LPARAM(&mut it as *mut _ as isize),
+    )
+    .0 as usize;
+    buf[..len.min(buf.len())].to_vec()
+}
 
-// Owner-draws the side panel's Size column as right-aligned blue text, matching
-// the Struis ICT mockup's file panel.
+// Owner-draws each side-panel row as a white rounded card: bold name + blue size
+// on the first line, a muted path on the second — matching the Struis ICT mockup.
 unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LRESULT {
     let lv = &*lv;
     let stage = lv.nmcd.dwDrawStage.0;
     if stage == CDDS_PREPAINT.0 {
         return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
     }
-    if stage == CDDS_ITEMPREPAINT.0 {
-        return LRESULT(CDRF_NOTIFYSUBITEMDRAW as isize);
-    }
-    if stage != (CDDS_SUBITEM.0 | CDDS_ITEMPREPAINT.0) || lv.iSubItem != SIDE_SIZE_COL {
+    // Draw the whole row at item-prepaint and skip default sub-item rendering.
+    if stage != CDDS_ITEMPREPAINT.0 {
         return LRESULT(CDRF_DODEFAULT as isize);
     }
 
@@ -1165,52 +1149,93 @@ unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     let rc = lv.nmcd.rc;
     let selected = row_selected(app.side_list, row);
     let p = palette(app.is_dark);
-    let bg = if selected {
-        GetSysColor(COLOR_HIGHLIGHT)
-    } else {
-        p.panel_bg
-    };
-    let bgb = CreateSolidBrush(COLORREF(bg));
-    FillRect(hdc, &rc, bgb);
-    let _ = DeleteObject(bgb);
 
-    let mut buf = [0u16; 64];
-    let mut it = LVITEMW {
-        iSubItem: SIDE_SIZE_COL,
-        pszText: PWSTR(buf.as_mut_ptr()),
-        cchTextMax: buf.len() as i32,
-        ..Default::default()
+    // The item rect spans the (wide) column layout; the card must fit the list's
+    // *visible* width instead, so it doesn't scroll off to the right.
+    let mut cl = RECT::default();
+    let _ = GetClientRect(app.side_list, &mut cl);
+    let rowbg = RECT {
+        left: cl.left,
+        top: rc.top,
+        right: cl.right,
+        bottom: rc.bottom,
     };
-    let len = SendMessageW(
-        app.side_list,
-        LVM_GETITEMTEXTW,
-        WPARAM(row),
-        LPARAM(&mut it as *mut _ as isize),
-    )
-    .0 as usize;
-    if len == 0 {
-        return LRESULT(CDRF_SKIPDEFAULT as isize);
-    }
+    let bgb = CreateSolidBrush(COLORREF(p.panel_bg));
+    FillRect(hdc, &rowbg, bgb);
+    let _ = DeleteObject(bgb);
+    let card = RECT {
+        left: cl.left + 6,
+        top: rc.top + 3,
+        right: cl.right - 6,
+        bottom: rc.bottom - 3,
+    };
+    let border = if selected { p.blue } else { p.hairline };
+    card_round(hdc, &card, 8, p.card_bg, border, 1);
+
+    let name = side_subitem_text(app.side_list, row, 0);
+    let size = side_subitem_text(app.side_list, row, 1);
+    // The path lives in the last column, which differs per view.
+    let path_col = if app.side_view == SideView::TempFiles {
+        4
+    } else {
+        3
+    };
+    let path = side_subitem_text(app.side_list, row, path_col);
 
     SetBkMode(hdc, TRANSPARENT);
-    let mut txt = buf[..len.min(buf.len())].to_vec();
-    let color = if selected {
-        GetSysColor(COLOR_HIGHLIGHTTEXT)
-    } else {
-        p.blue
-    };
-    SetTextColor(hdc, COLORREF(color));
-    let mut trc = RECT {
-        left: rc.left + 2,
-        top: rc.top,
-        right: rc.right - 8,
-        bottom: rc.bottom,
+    let lx = card.left + 12;
+    let top_b = card.top;
+    let mid = (card.top + card.bottom) / 2;
+
+    // Size (blue) on the right of the first line — measure it so the name clamps.
+    let old = SelectObject(hdc, HGDIOBJ(app.font_small.0));
+    let mut size_txt = size.clone();
+    let mut scalc = RECT::default();
+    DrawTextW(hdc, &mut size_txt, &mut scalc, DT_CALCRECT | DT_SINGLELINE);
+    let size_w = scalc.right - scalc.left;
+    SetTextColor(hdc, COLORREF(p.blue));
+    let mut src = RECT {
+        left: card.right - size_w - 12,
+        top: top_b,
+        right: card.right - 12,
+        bottom: mid,
     };
     DrawTextW(
         hdc,
-        &mut txt,
-        &mut trc,
+        &mut size_txt,
+        &mut src,
         DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
+    );
+    // Name (semibold, dark) on the first line.
+    SetTextColor(hdc, COLORREF(p.text));
+    let mut name_txt = name;
+    let mut nrc = RECT {
+        left: lx,
+        top: top_b,
+        right: card.right - size_w - 20,
+        bottom: mid,
+    };
+    DrawTextW(
+        hdc,
+        &mut name_txt,
+        &mut nrc,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+    );
+    // Path (regular, muted) on the second line.
+    SelectObject(hdc, old);
+    SetTextColor(hdc, COLORREF(p.subtext));
+    let mut path_txt = path;
+    let mut prc = RECT {
+        left: lx,
+        top: mid,
+        right: card.right - 12,
+        bottom: card.bottom,
+    };
+    DrawTextW(
+        hdc,
+        &mut path_txt,
+        &mut prc,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
     );
     LRESULT(CDRF_SKIPDEFAULT as isize)
 }
@@ -1312,6 +1337,63 @@ unsafe fn card_round(hdc: HDC, rc: &RECT, radius: i32, fill: u32, border: u32, b
     let _ = DeleteObject(pen);
 }
 
+// A flat filled folder glyph (tab + body) centred at (cx, cy). Reads clearly as
+// a folder at row size, unlike the ambiguous MDL2 outline glyph.
+unsafe fn draw_folder_glyph(hdc: HDC, cx: i32, cy: i32, color: u32) {
+    let w = 16;
+    let h = 12;
+    let l = cx - w / 2;
+    let t = cy - h / 2;
+    let br = CreateSolidBrush(COLORREF(color));
+    let pen = CreatePen(PS_SOLID, 1, COLORREF(color));
+    let ob = SelectObject(hdc, HGDIOBJ(br.0));
+    let op = SelectObject(hdc, HGDIOBJ(pen.0));
+    let _ = RoundRect(hdc, l, t, l + 9, t + 5, 2, 2); // tab
+    let _ = RoundRect(hdc, l, t + 3, l + w, t + h, 3, 3); // body
+    SelectObject(hdc, ob);
+    SelectObject(hdc, op);
+    let _ = DeleteObject(br);
+    let _ = DeleteObject(pen);
+}
+
+// A flat page glyph with a folded top-right corner, outlined in `color` and
+// filled with `fill` (the cell background), centred at (cx, cy).
+unsafe fn draw_file_glyph(hdc: HDC, cx: i32, cy: i32, color: u32, fill: u32) {
+    let w = 12;
+    let h = 15;
+    let fold = 5;
+    let l = cx - w / 2;
+    let t = cy - h / 2;
+    let r = l + w;
+    let b = t + h;
+    let pen = CreatePen(PS_SOLID, 1, COLORREF(color));
+    let brush = CreateSolidBrush(COLORREF(fill));
+    let op = SelectObject(hdc, HGDIOBJ(pen.0));
+    let ob = SelectObject(hdc, HGDIOBJ(brush.0));
+    let body = [
+        POINT { x: l, y: t },
+        POINT { x: r - fold, y: t },
+        POINT { x: r, y: t + fold },
+        POINT { x: r, y: b },
+        POINT { x: l, y: b },
+    ];
+    let _ = Polygon(hdc, &body);
+    // The folded corner.
+    let fold_pts = [
+        POINT { x: r - fold, y: t },
+        POINT {
+            x: r - fold,
+            y: t + fold,
+        },
+        POINT { x: r, y: t + fold },
+    ];
+    let _ = Polyline(hdc, &fold_pts);
+    SelectObject(hdc, op);
+    SelectObject(hdc, ob);
+    let _ = DeleteObject(pen);
+    let _ = DeleteObject(brush);
+}
+
 // The theme-toggle pill rectangle, right-aligned within the top bar's client rect.
 fn pill_rect(client: &RECT) -> RECT {
     let w = 92;
@@ -1324,6 +1406,25 @@ fn pill_rect(client: &RECT) -> RECT {
         right,
         bottom: top + h,
     }
+}
+
+// The Back / Forward / Up navigation button rectangles on the left of the top bar.
+fn nav_button_rects(client: &RECT) -> [RECT; 3] {
+    let bw = 34;
+    let bh = 32;
+    let gap = 6;
+    let x0 = 14;
+    let ty = (client.bottom - bh) / 2;
+    let mk = |i: i32| {
+        let l = x0 + i * (bw + gap);
+        RECT {
+            left: l,
+            top: ty,
+            right: l + bw,
+            bottom: ty + bh,
+        }
+    };
+    [mk(0), mk(1), mk(2)]
 }
 
 // Branded top bar: logo mark + "ClutterCutter" / "Struis ICT", theme pill on the right.
@@ -1359,56 +1460,31 @@ unsafe extern "system" fn topbar_proc(
             FillRect(hdc, &hair, hb);
             let _ = DeleteObject(hb);
 
-            // Struis ICT "S" logo mark at the left, vertically centred.
-            let icon = load_logo_icon(34);
-            let iy = (rc.bottom - 34) / 2;
-            let _ = DrawIconEx(hdc, 14, iy, icon, 34, 34, 0, None, DI_NORMAL);
-
+            // Navigation buttons (Back / Forward / Up) on the left, replacing the
+            // logo + title. Each is a rounded button with a Segoe MDL2 glyph;
+            // unavailable actions are drawn disabled.
             SetBkMode(hdc, TRANSPARENT);
-            let x0 = 14 + 34 + 12;
-            // Title.
-            let old = SelectObject(hdc, HGDIOBJ(app.font_title.0));
-            let mut title: Vec<u16> = "ClutterCutter".encode_utf16().collect();
-            let mut calc = RECT::default();
-            DrawTextW(hdc, &mut title, &mut calc, DT_CALCRECT | DT_SINGLELINE);
-            let title_w = calc.right - calc.left;
-            let mut trc = RECT {
-                left: x0,
-                top: 0,
-                right: x0 + title_w + 4,
-                bottom: rc.bottom,
-            };
-            SetTextColor(hdc, COLORREF(p.text));
-            DrawTextW(
-                hdc,
-                &mut title,
-                &mut trc,
-                DT_SINGLELINE | DT_VCENTER | DT_LEFT,
-            );
-            // "Struis ICT" as a bordered rounded chip in muted text.
-            SelectObject(hdc, HGDIOBJ(app.font_small.0));
-            let mut sube: Vec<u16> = "Struis ICT".encode_utf16().collect();
-            let mut scalc = RECT::default();
-            DrawTextW(hdc, &mut sube, &mut scalc, DT_CALCRECT | DT_SINGLELINE);
-            let chip_w = (scalc.right - scalc.left) + 24;
-            let chip_h = 26;
-            let chip_l = x0 + title_w + 14;
-            let chip_t = (rc.bottom - chip_h) / 2;
-            let chip = RECT {
-                left: chip_l,
-                top: chip_t,
-                right: chip_l + chip_w,
-                bottom: chip_t + chip_h,
-            };
-            card_round(hdc, &chip, 13, p.win_bg, p.subtext, 1);
-            SetTextColor(hdc, COLORREF(p.subtext));
-            let mut src = chip;
-            DrawTextW(
-                hdc,
-                &mut sube,
-                &mut src,
-                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-            );
+            let btns = nav_button_rects(&rc);
+            let enabled = [
+                app.nav_pos > 0,
+                app.nav_pos >= 0 && (app.nav_pos as usize) < app.nav_hist.len().saturating_sub(1),
+                nav_parent_hti(app) != 0,
+            ];
+            let glyphs = ["\u{E72B}", "\u{E72A}", "\u{E70E}"]; // Back, Forward, Up
+            let old = SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+            for (i, br) in btns.iter().enumerate() {
+                card_round(hdc, br, 6, p.card_bg, p.hairline, 1);
+                let col = if enabled[i] { p.text } else { p.subtext };
+                SetTextColor(hdc, COLORREF(col));
+                let mut g: Vec<u16> = glyphs[i].encode_utf16().collect();
+                let mut grc = *br;
+                DrawTextW(
+                    hdc,
+                    &mut g,
+                    &mut grc,
+                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+                );
+            }
 
             // Theme pill: rounded track with a dark knob on the active side and
             // Segoe MDL2 sun / moon glyphs.
@@ -1466,15 +1542,25 @@ unsafe extern "system" fn topbar_proc(
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
-            let pr = pill_rect(&rc);
-            if x >= pr.left && x < pr.right && y >= pr.top && y < pr.bottom {
-                let mid = (pr.left + pr.right) / 2;
-                let mode = if x < mid {
-                    ThemeMode::Light
-                } else {
-                    ThemeMode::Dark
-                };
-                apply_theme(app.main_hwnd, app, mode);
+            let hit = |r: &RECT| x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+            let btns = nav_button_rects(&rc);
+            if hit(&btns[0]) {
+                nav_back(app);
+            } else if hit(&btns[1]) {
+                nav_forward(app);
+            } else if hit(&btns[2]) {
+                nav_up(app);
+            } else {
+                let pr = pill_rect(&rc);
+                if hit(&pr) {
+                    let mid = (pr.left + pr.right) / 2;
+                    let mode = if x < mid {
+                        ThemeMode::Light
+                    } else {
+                        ThemeMode::Dark
+                    };
+                    apply_theme(app.main_hwnd, app, mode);
+                }
             }
             LRESULT(0)
         }
@@ -2159,7 +2245,11 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         WS_EX_CLIENTEDGE,
         w!("SysListView32"),
         PCWSTR::null(),
-        WS_CHILD | WS_TABSTOP | WINDOW_STYLE(LVS_REPORT) | WINDOW_STYLE(LVS_SHOWSELALWAYS),
+        WS_CHILD
+            | WS_TABSTOP
+            | WINDOW_STYLE(LVS_REPORT)
+            | WINDOW_STYLE(LVS_SHOWSELALWAYS)
+            | WINDOW_STYLE(LVS_NOCOLUMNHEADER),
         0,
         PANEL_HEADER_H,
         PANEL_W,
@@ -2176,6 +2266,16 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         WPARAM(0),
         LPARAM(ext),
     );
+    // A 1×46 image list forces ~46px rows so each row can hold a two-line card.
+    let il = ImageList_Create(1, 46, ILC_COLOR32, 1, 1);
+    if il.0 != 0 {
+        SendMessageW(
+            app.side_list,
+            LVM_SETIMAGELIST,
+            WPARAM(LVSIL_SMALL as usize),
+            LPARAM(il.0),
+        );
+    }
 
     // Columns mirror the Struis ICT design: Name, a custom-drawn "% of parent"
     // bar, then the numeric/date detail columns. Keep MAIN_FIXED_COLS_W in sync
@@ -3002,8 +3102,80 @@ unsafe fn on_tree_select(app: &mut AppState) {
     // the list double-click selects a child's tree item, which must be present.
     // populate_children is idempotent (guards on the `populated` set).
     populate_children(app, hti, node);
-    // Refresh the breadcrumb to reflect the new path.
+    // Record this location in the navigation history, unless we got here via a
+    // Back/Forward button (which re-selects an item already in the history).
+    if !app.nav_lock && app.nav_hist.get(app.nav_pos.max(0) as usize).copied() != Some(hti) {
+        let keep = (app.nav_pos + 1).max(0) as usize;
+        app.nav_hist.truncate(keep);
+        app.nav_hist.push(hti);
+        app.nav_pos = app.nav_hist.len() as i32 - 1;
+    }
+    // Refresh the breadcrumb + top-bar nav button states.
     let _ = InvalidateRect(app.crumb, None, false);
+    let _ = InvalidateRect(app.topbar, None, false);
+}
+
+// Selects a tree item without recording it as a new history entry.
+unsafe fn nav_select(app: &mut AppState, hti: isize) {
+    app.nav_lock = true;
+    SendMessageW(
+        app.tree,
+        TVM_SELECTITEM,
+        WPARAM(TVGN_CARET as usize),
+        LPARAM(hti),
+    );
+    app.nav_lock = false;
+    let _ = InvalidateRect(app.topbar, None, false);
+}
+
+unsafe fn nav_back(app: &mut AppState) {
+    if app.nav_pos > 0 {
+        app.nav_pos -= 1;
+        let hti = app.nav_hist[app.nav_pos as usize];
+        nav_select(app, hti);
+    }
+}
+
+unsafe fn nav_forward(app: &mut AppState) {
+    if app.nav_pos >= 0 && (app.nav_pos as usize) < app.nav_hist.len().saturating_sub(1) {
+        app.nav_pos += 1;
+        let hti = app.nav_hist[app.nav_pos as usize];
+        nav_select(app, hti);
+    }
+}
+
+// HTREEITEM of the current selection's parent, or 0 at the root.
+unsafe fn nav_parent_hti(app: &AppState) -> isize {
+    let caret = SendMessageW(
+        app.tree,
+        TVM_GETNEXTITEM,
+        WPARAM(TVGN_CARET as usize),
+        LPARAM(0),
+    )
+    .0 as isize;
+    if caret == 0 {
+        return 0;
+    }
+    SendMessageW(
+        app.tree,
+        TVM_GETNEXTITEM,
+        WPARAM(TVGN_PARENT as usize),
+        LPARAM(caret),
+    )
+    .0 as isize
+}
+
+// Navigates to the parent folder (records a new history entry, like a click).
+unsafe fn nav_up(app: &mut AppState) {
+    let parent = nav_parent_hti(app);
+    if parent != 0 {
+        SendMessageW(
+            app.tree,
+            TVM_SELECTITEM,
+            WPARAM(TVGN_CARET as usize),
+            LPARAM(parent),
+        );
+    }
 }
 
 unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
@@ -3533,6 +3705,9 @@ unsafe fn apply_side_view(hwnd: HWND, app: &mut AppState, view: SideView) {
             }
         }
     }
+    if view != SideView::None {
+        fit_side_columns(app.side_list);
+    }
 
     let _ = ShowWindow(
         app.side_list,
@@ -3707,8 +3882,22 @@ unsafe fn panel_layout(app: &AppState, panel: HWND) {
     }
     let content_h = (h - PANEL_HEADER_H).max(0);
     let _ = MoveWindow(app.side_list, 0, PANEL_HEADER_H, w, content_h, true);
+    fit_side_columns(app.side_list);
     // Buttons moved — repaint the header so the title re-clamps.
     let _ = InvalidateRect(panel, None, false);
+}
+
+// The side-panel rows are owner-drawn cards, so the columns are only data
+// storage. Collapse them into column 0 spanning the visible width — that keeps
+// the full row clickable while removing the horizontal scrollbar.
+unsafe fn fit_side_columns(list: HWND) {
+    let mut cl = RECT::default();
+    let _ = GetClientRect(list, &mut cl);
+    let w = (cl.right - cl.left - 2).max(0);
+    SendMessageW(list, LVM_SETCOLUMNWIDTH, WPARAM(0), LPARAM(w as isize));
+    for c in 1..6 {
+        SendMessageW(list, LVM_SETCOLUMNWIDTH, WPARAM(c), LPARAM(0));
+    }
 }
 
 unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
@@ -4157,12 +4346,9 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
     SendMessageW(app.list, LVM_SETBKCOLOR, WPARAM(0), LPARAM(bg as isize));
     SendMessageW(app.list, LVM_SETTEXTCOLOR, WPARAM(0), LPARAM(fg as isize));
     SendMessageW(app.list, LVM_SETTEXTBKCOLOR, WPARAM(0), LPARAM(bg as isize));
-    SendMessageW(
-        app.side_list,
-        LVM_SETBKCOLOR,
-        WPARAM(0),
-        LPARAM(bg as isize),
-    );
+    // The side list is a card list on the panel background.
+    let side_bg = palette(is_dark).panel_bg as isize;
+    SendMessageW(app.side_list, LVM_SETBKCOLOR, WPARAM(0), LPARAM(side_bg));
     SendMessageW(
         app.side_list,
         LVM_SETTEXTCOLOR,
@@ -4173,7 +4359,7 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
         app.side_list,
         LVM_SETTEXTBKCOLOR,
         WPARAM(0),
-        LPARAM(bg as isize),
+        LPARAM(side_bg),
     );
     SendMessageW(app.tree, TVM_SETBKCOLOR, WPARAM(0), LPARAM(bg as isize));
     SendMessageW(app.tree, TVM_SETTEXTCOLOR, WPARAM(0), LPARAM(fg as isize));
@@ -4204,7 +4390,7 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
         hwnd,
         None,
         None,
-        RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
+        RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
     );
     if !app.float_win.is_invalid() {
         nudge_caption_repaint(app.float_win);

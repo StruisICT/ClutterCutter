@@ -3,9 +3,6 @@
 // The icon ID "1" makes Explorer pick this as the application icon.
 1 ICON "../ClutterCutter.ico"
 
-// Icon ID "2" is the Struis ICT "S" logo mark, drawn in the branded top bar.
-2 ICON "struis-s.ico"
-
 // Application manifest (24 = RT_MANIFEST): comctl32 v6 + Win10 supportedOS,
 // required for visual styles and dark-mode theming.
 1 24 "app.manifest"
