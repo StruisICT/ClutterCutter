@@ -54,7 +54,7 @@ use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
     ImageList_Create, InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, CDDS_ITEMPREPAINT,
     CDDS_PREPAINT, CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
-    CDRF_SKIPDEFAULT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
+    CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
     ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT,
     LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN,
     LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW,
@@ -62,10 +62,10 @@ use windows::Win32::UI::Controls::{
     LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR,
     LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
     LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW,
-    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, TASKDIALOGCONFIG, TASKDIALOGCONFIG_0,
-    TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
+    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED, TASKDIALOGCONFIG,
+    TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
     TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN, TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET,
-    TVGN_PARENT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
+    TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
     TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
     TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
     TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
@@ -85,15 +85,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
     LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
     SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
     SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
-    BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA,
-    HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND,
-    MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
-    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SIZE,
-    WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW,
-    WS_TABSTOP, WS_VISIBLE,
+    BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY,
+    GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO,
+    MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU,
+    SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+    SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT,
+    WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
+    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -1338,6 +1338,58 @@ unsafe fn card_round(hdc: HDC, rc: &RECT, radius: i32, fill: u32, border: u32, b
     let _ = DeleteObject(pen);
 }
 
+// Owner-draws a flat, rounded push button matching the redesign. `primary` fills
+// it with the accent blue (the Scan-all call-to-action); otherwise it is a
+// card-style button with a hairline border. `parent_bg` clears the corners.
+unsafe fn draw_flat_button(
+    app: &AppState,
+    dis: *const DRAWITEMSTRUCT,
+    primary: bool,
+    parent_bg: u32,
+) {
+    let dis = &*dis;
+    let hdc = dis.hDC;
+    let rc = dis.rcItem;
+    let pressed = (dis.itemState.0 & ODS_SELECTED.0) != 0;
+    let disabled = (dis.itemState.0 & ODS_DISABLED.0) != 0;
+    let p = palette(app.is_dark);
+
+    // Clear the item rect to the parent background so the rounded corners blend.
+    let clr = CreateSolidBrush(COLORREF(parent_bg));
+    FillRect(hdc, &rc, clr);
+    let _ = DeleteObject(clr);
+
+    let (fill, border, text) = if disabled {
+        (parent_bg, p.hairline, p.subtext)
+    } else if primary {
+        let f = if pressed { 0x00C0_5A24 } else { p.blue };
+        (f, f, 0x00FF_FFFF)
+    } else if pressed {
+        (p.track, p.blue, p.text)
+    } else {
+        (p.card_bg, p.hairline, p.text)
+    };
+    let radius = (rc.bottom - rc.top).min(rc.right - rc.left).clamp(6, 16) / 2 + 3;
+    card_round(hdc, &rc, radius, fill, border, 1);
+
+    // Centred label.
+    let mut buf = [0u16; 64];
+    let n = GetWindowTextW(dis.hwndItem, &mut buf) as usize;
+    if n > 0 {
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, COLORREF(text));
+        let old = SelectObject(hdc, HGDIOBJ(app.font_small.0));
+        let mut r = rc;
+        DrawTextW(
+            hdc,
+            &mut buf[..n],
+            &mut r,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        );
+        SelectObject(hdc, old);
+    }
+}
+
 // A flat filled folder glyph (tab + body) centred at (cx, cy). Reads clearly as
 // a folder at row size, unlike the ambiguous MDL2 outline glyph.
 unsafe fn draw_folder_glyph(hdc: HDC, cx: i32, cy: i32, color: u32) {
@@ -1471,7 +1523,7 @@ unsafe extern "system" fn topbar_proc(
                 app.nav_pos >= 0 && (app.nav_pos as usize) < app.nav_hist.len().saturating_sub(1),
                 nav_parent_hti(app) != 0,
             ];
-            let glyphs = ["\u{E72B}", "\u{E72A}", "\u{E70E}"]; // Back, Forward, Up
+            let glyphs = ["\u{E72B}", "\u{E72A}", "\u{E80F}"]; // Back, Forward, Home (top level)
             let old = SelectObject(hdc, HGDIOBJ(app.font_icon.0));
             for (i, br) in btns.iter().enumerate() {
                 card_round(hdc, br, 6, p.card_bg, p.hairline, 1);
@@ -1619,6 +1671,16 @@ unsafe extern "system" fn sidebar_proc(
         WM_COMMAND => {
             SendMessageW(app.main_hwnd, WM_COMMAND, wparam, lparam);
             LRESULT(0)
+        }
+        // Flat-style Scan-all button (owner-drawn, accent primary).
+        WM_DRAWITEM => {
+            draw_flat_button(
+                app,
+                lparam.0 as *const DRAWITEMSTRUCT,
+                true,
+                palette(app.is_dark).win_bg,
+            );
+            LRESULT(1)
         }
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
@@ -1935,12 +1997,8 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     app.scan_all_btn = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("BUTTON"),
-        w!("Scan all\ndrives"),
-        WS_CHILD
-            | WS_VISIBLE
-            | WS_TABSTOP
-            | WINDOW_STYLE(BS_PUSHBUTTON as u32)
-            | WINDOW_STYLE(0x0000_2000), // BS_MULTILINE
+        w!("Scan all drives"),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
         bar_x,
         BTN_Y,
         110,
@@ -2246,7 +2304,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         WINDOW_EX_STYLE(0),
         w!("BUTTON"),
         w!("Detach"),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_PUSHBUTTON as u32),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
         0,
         0,
         70,
@@ -2261,7 +2319,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         WINDOW_EX_STYLE(0),
         w!("BUTTON"),
         w!("Recycle all"),
-        WS_CHILD | WS_TABSTOP | WINDOW_STYLE(BS_PUSHBUTTON as u32), // temp view only
+        WS_CHILD | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32), // temp view only
         0,
         0,
         90,
@@ -3198,15 +3256,29 @@ unsafe fn nav_parent_hti(app: &AppState) -> isize {
     .0 as isize
 }
 
-// Navigates to the parent folder (records a new history entry, like a click).
+// Jumps straight to the top-level view (the "All drives" root), recording a new
+// history entry like a click.
 unsafe fn nav_up(app: &mut AppState) {
-    let parent = nav_parent_hti(app);
-    if parent != 0 {
+    let root = SendMessageW(
+        app.tree,
+        TVM_GETNEXTITEM,
+        WPARAM(TVGN_ROOT as usize),
+        LPARAM(0),
+    )
+    .0 as isize;
+    let caret = SendMessageW(
+        app.tree,
+        TVM_GETNEXTITEM,
+        WPARAM(TVGN_CARET as usize),
+        LPARAM(0),
+    )
+    .0 as isize;
+    if root != 0 && root != caret {
         SendMessageW(
             app.tree,
             TVM_SELECTITEM,
             WPARAM(TVGN_CARET as usize),
-            LPARAM(parent),
+            LPARAM(root),
         );
     }
 }
@@ -4052,6 +4124,16 @@ unsafe extern "system" fn panel_proc(
         WM_PAINT => {
             paint_panel_header(app, hwnd);
             LRESULT(0)
+        }
+        // Flat-style Detach / Recycle-all buttons (owner-drawn, secondary).
+        WM_DRAWITEM => {
+            draw_flat_button(
+                app,
+                lparam.0 as *const DRAWITEMSTRUCT,
+                false,
+                palette(app.is_dark).panel_bg,
+            );
+            LRESULT(1)
         }
         // Clicks on the view-switch toolbar buttons switch the side view.
         WM_LBUTTONDOWN => {
