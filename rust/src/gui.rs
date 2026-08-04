@@ -52,23 +52,20 @@ use windows::Win32::System::Registry::{
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
-    ImageList_Create, InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, CDDS_ITEMPREPAINT,
-    CDDS_PREPAINT, CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW,
-    CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, ICC_BAR_CLASSES,
-    ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, ILC_COLOR32,
-    INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW,
-    LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_ENSUREVISIBLE,
-    LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM,
-    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
-    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR,
-    LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
-    LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE,
-    NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED,
-    TASKDIALOGCONFIG, TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON,
-    TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN,
-    TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN,
-    TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND,
-    TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
+    ImageList_Create, InitCommonControlsEx, SetWindowTheme, CDDS_ITEMPREPAINT, CDDS_PREPAINT,
+    CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
+    CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
+    ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT,
+    LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN,
+    LVM_DELETEITEM, LVM_ENSUREVISIBLE, LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW,
+    LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR,
+    LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW,
+    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR,
+    NMITEMACTIVATE, NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED,
+    ODS_SELECTED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE,
+    TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW,
+    TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
     TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
     TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
@@ -81,21 +78,22 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
-    CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
-    GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
-    GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, LoadCursorW,
-    LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW,
-    SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL,
-    BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY,
-    GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO,
-    MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU,
-    SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-    SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT,
-    WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
-    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW, DrawIconEx,
+    DrawMenuBar, GetClientRect, GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW,
+    GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsWindow,
+    IsZoomed, LoadCursorW, LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW,
+    SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW,
+    TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
+    CW_USEDEFAULT, DI_NORMAL, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE,
+    IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING,
+    MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
+    WM_DRAWITEM, WM_ERASEBKGND, WM_HSCROLL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR,
+    WM_SIZE, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE,
+    WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -303,6 +301,9 @@ struct AppState {
     nav_hist: Vec<isize>,
     nav_pos: i32,
     nav_lock: bool,
+    // Clickable hotspots of the themed About window: (rect, action) where action
+    // 0=coffee, 1=github, 2=site, 3=OK. Recorded on paint, used by click.
+    about_hit: Vec<(RECT, i32)>,
 
     // Side panel: container (child of main or of the floating frame when
     // detached), its header buttons, the listview that hosts the file-based
@@ -446,6 +447,7 @@ pub fn run() {
             nav_hist: Vec::new(),
             nav_pos: -1,
             nav_lock: false,
+            about_hit: Vec::new(),
             panel: HWND::default(),
             side_list: HWND::default(),
             btn_detach: HWND::default(),
@@ -740,7 +742,7 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
             relaunch_elevated();
         }
         ID_MENU_ABOUT => {
-            show_about(hwnd);
+            show_about(hwnd, app);
         }
         ID_MENU_THEME_AUTO => apply_theme(hwnd, app, ThemeMode::Auto),
         ID_MENU_THEME_LIGHT => apply_theme(hwnd, app, ThemeMode::Light),
@@ -1068,10 +1070,13 @@ unsafe fn draw_expand_box(hdc: HDC, x: i32, cy: i32, expanded: bool, color: u32,
     let _ = DeleteObject(br);
 }
 
-// Subclass of the main list that recolors its column-header text. The themed
-// header otherwise draws near-black text, which is unreadable on the dark header
-// background in dark mode. The header sends its NM_CUSTOMDRAW to its parent (the
-// list), so we intercept it here.
+// Subclass applied to both custom-drawn listviews. It (1) recolors the main
+// list's column-header text so it stays readable on the dark header background,
+// and (2) forces a full client repaint after any scroll. Without (2), the
+// listview blit-scrolls and only invalidates the newly-exposed strip, which
+// leaves slivers of the previous frame behind — a stray expand-box/folder glyph
+// in the header seam, or a duplicated card at the top of the side panel. A full
+// invalidate is flicker-free here because both lists are double-buffered.
 unsafe extern "system" fn list_header_subclass(
     hwnd: HWND,
     msg: u32,
@@ -1080,6 +1085,11 @@ unsafe extern "system" fn list_header_subclass(
     _id: usize,
     refdata: usize,
 ) -> LRESULT {
+    if msg == WM_MOUSEWHEEL || msg == WM_VSCROLL || msg == WM_HSCROLL {
+        let r = DefSubclassProc(hwnd, msg, wparam, lparam);
+        let _ = InvalidateRect(hwnd, None, false);
+        return r;
+    }
     if msg == WM_NOTIFY {
         let nmhdr = &*(lparam.0 as *const NMHDR);
         if nmhdr.code == NM_CUSTOMDRAW {
@@ -2502,6 +2512,14 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         LVM_SETEXTENDEDLISTVIEWSTYLE,
         WPARAM(0),
         LPARAM(ext),
+    );
+    // Same subclass as the main list: force a full repaint after scroll so no
+    // sliver of the previous frame (a duplicated card) survives at the top.
+    let _ = SetWindowSubclass(
+        app.side_list,
+        Some(list_header_subclass),
+        1,
+        app as *mut AppState as usize,
     );
     // A 1×46 image list forces ~46px rows so each row can hold a two-line card.
     let il = ImageList_Create(1, 46, ILC_COLOR32, 1, 1);
@@ -4993,60 +5011,241 @@ const COFFEE_URL: &str = "https://buymeacoffee.com/struis112";
 const GITHUB_URL: &str = "https://github.com/StruisICT/ClutterCutter";
 const SITE_URL: &str = "https://struisict.com";
 
-unsafe fn show_about(hwnd: HWND) {
-    // A TaskDialog (not a plain MessageBox) so the version tracks the crate
-    // version and the Buy-Me-a-Coffee / GitHub / site links are clickable.
-    let title = wide("About ClutterCutter");
-    let instruction = wide("ClutterCutter");
-    let content = wide(&format!(
-        "Version {ver} — Free Software from Struis ICT\n\n\
-         Lightweight Windows disk-usage browser.\n\
-         FindFirstFileEx walker + NTFS MFT fast path.\n\n\
-         <a href=\"{coffee}\">\u{2615} Buy me a coffee</a>\n\
-         <a href=\"{github}\">GitHub</a>   \u{00b7}   <a href=\"{site}\">struisict.com</a>",
-        ver = env!("CARGO_PKG_VERSION"),
-        coffee = COFFEE_URL,
-        github = GITHUB_URL,
-        site = SITE_URL,
-    ));
-    let cfg = TASKDIALOGCONFIG {
-        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
-        hwndParent: hwnd,
-        dwFlags: TDF_ENABLE_HYPERLINKS | TDF_USE_HICON_MAIN | TDF_ALLOW_DIALOG_CANCELLATION,
-        dwCommonButtons: TDCBF_OK_BUTTON,
-        pszWindowTitle: PCWSTR(title.as_ptr()),
-        Anonymous1: TASKDIALOGCONFIG_0 {
-            hMainIcon: load_app_icon(),
-        },
-        pszMainInstruction: PCWSTR(instruction.as_ptr()),
-        pszContent: PCWSTR(content.as_ptr()),
-        pfCallback: Some(about_task_callback),
+// A custom, theme-aware modal About window (a system TaskDialog can't follow
+// the dark/light theme). Runs its own modal loop until closed.
+unsafe fn show_about(parent: HWND, app: &mut AppState) {
+    let hinstance = GetModuleHandleW(None).expect("hinst");
+    let class = w!("ClutterCutterAbout");
+    RegisterClassExW(&WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(about_proc),
+        hInstance: hinstance.into(),
+        hIcon: load_app_icon(),
+        hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+        hbrBackground: HBRUSH::default(),
+        lpszClassName: class,
         ..Default::default()
-    };
-    let _ = TaskDialogIndirect(&cfg, None, None, None);
+    });
+    let (w, h) = (460, 328);
+    let mut pr = RECT::default();
+    let _ = GetWindowRect(parent, &mut pr);
+    let x = pr.left + ((pr.right - pr.left) - w) / 2;
+    let y = pr.top + ((pr.bottom - pr.top) - h) / 2;
+    let title = wide("About ClutterCutter");
+    let hwnd = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        class,
+        PCWSTR(title.as_ptr()),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        x,
+        y,
+        w,
+        h,
+        parent,
+        HMENU::default(),
+        hinstance,
+        None,
+    )
+    .expect("about window");
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, app as *mut AppState as isize);
+    // Dark title bar to match the theme.
+    let use_dark = BOOL(if app.is_dark { 1 } else { 0 });
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
+        &use_dark as *const _ as *const _,
+        std::mem::size_of::<BOOL>() as u32,
+    );
+    let _ = ShowWindow(hwnd, SW_SHOW);
+    let _ = UpdateWindow(hwnd);
+
+    // Modal: disable the parent and pump messages until the window is gone.
+    let _ = EnableWindow(parent, false);
+    let mut msg = MSG::default();
+    while IsWindow(hwnd).as_bool() {
+        if GetMessageW(&mut msg, None, 0, 0).0 <= 0 {
+            break;
+        }
+        let _ = TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    let _ = EnableWindow(parent, true);
+    let _ = SetForegroundWindow(parent);
 }
 
-// Opens the clicked About-dialog link in the system browser.
-unsafe extern "system" fn about_task_callback(
-    _hwnd: HWND,
-    msg: TASKDIALOG_NOTIFICATIONS,
-    _wparam: WPARAM,
-    lparam: LPARAM,
-    _data: isize,
-) -> windows::core::HRESULT {
-    if msg == TDN_HYPERLINK_CLICKED {
-        // lparam is a PCWSTR to the href (one of our own compile-time URLs).
-        let url = PCWSTR(lparam.0 as *const u16);
-        let _ = ShellExecuteW(
-            HWND::default(),
-            w!("open"),
-            url,
-            PCWSTR::null(),
-            PCWSTR::null(),
-            SW_NORMAL,
-        );
+// Draws `s` left-aligned at (x, y) and returns the tight rect it occupies.
+unsafe fn about_text(hdc: HDC, s: &str, x: i32, y: i32) -> RECT {
+    let mut v: Vec<u16> = s.encode_utf16().collect();
+    let mut calc = RECT::default();
+    DrawTextW(hdc, &mut v, &mut calc, DT_CALCRECT | DT_SINGLELINE);
+    let tw = calc.right - calc.left;
+    let th = calc.bottom - calc.top;
+    let mut r = RECT {
+        left: x,
+        top: y,
+        right: x + tw,
+        bottom: y + th,
+    };
+    DrawTextW(hdc, &mut v, &mut r, DT_SINGLELINE | DT_LEFT);
+    r
+}
+
+// Centered variant; returns the drawn rect.
+unsafe fn about_center(hdc: HDC, s: &str, cw: i32, y: i32) -> RECT {
+    let mut v: Vec<u16> = s.encode_utf16().collect();
+    let mut calc = RECT::default();
+    DrawTextW(hdc, &mut v, &mut calc, DT_CALCRECT | DT_SINGLELINE);
+    about_text(hdc, s, (cw - (calc.right - calc.left)) / 2, y)
+}
+
+unsafe fn paint_about(hwnd: HWND, app_ptr: *mut AppState) {
+    if app_ptr.is_null() {
+        return;
     }
-    windows::Win32::Foundation::S_OK
+    let app = &mut *app_ptr;
+    let mut ps = PAINTSTRUCT::default();
+    let hdc = BeginPaint(hwnd, &mut ps);
+    let mut rc = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rc);
+    let p = palette(app.is_dark);
+    let cw = rc.right;
+    let bg = CreateSolidBrush(COLORREF(p.card_bg));
+    FillRect(hdc, &rc, bg);
+    let _ = DeleteObject(bg);
+    SetBkMode(hdc, TRANSPARENT);
+    app.about_hit.clear();
+
+    let icon = load_app_icon();
+    let _ = DrawIconEx(hdc, (cw - 48) / 2, 22, icon, 48, 48, 0, None, DI_NORMAL);
+
+    let old = SelectObject(hdc, HGDIOBJ(app.font_title.0));
+    SetTextColor(hdc, COLORREF(p.text));
+    about_center(hdc, "ClutterCutter", cw, 80);
+
+    SelectObject(hdc, HGDIOBJ(app.font_small.0));
+    SetTextColor(hdc, COLORREF(p.subtext));
+    about_center(
+        hdc,
+        &format!(
+            "Version {} \u{2014} Free Software from Struis ICT",
+            env!("CARGO_PKG_VERSION")
+        ),
+        cw,
+        114,
+    );
+    SetTextColor(hdc, COLORREF(p.text));
+    about_center(hdc, "Lightweight Windows disk-usage browser.", cw, 144);
+    about_center(hdc, "FindFirstFileEx walker + NTFS MFT fast path.", cw, 164);
+
+    // Buy-me-a-coffee link.
+    SetTextColor(hdc, COLORREF(p.blue));
+    let coffee = about_center(hdc, "\u{2615} Buy me a coffee", cw, 198);
+    app.about_hit.push((coffee, 0));
+
+    // "GitHub  \u{00b7}  struisict.com" row, centred, with two links.
+    let wpx = |s: &str| -> i32 {
+        let mut v: Vec<u16> = s.encode_utf16().collect();
+        let mut r = RECT::default();
+        DrawTextW(hdc, &mut v, &mut r, DT_CALCRECT | DT_SINGLELINE);
+        r.right - r.left
+    };
+    let (gh, sep, site) = ("GitHub", "   \u{00b7}   ", "struisict.com");
+    let total = wpx(gh) + wpx(sep) + wpx(site);
+    let mut lx = (cw - total) / 2;
+    let y2 = 226;
+    SetTextColor(hdc, COLORREF(p.blue));
+    let ghr = about_text(hdc, gh, lx, y2);
+    app.about_hit.push((ghr, 1));
+    lx += wpx(gh);
+    SetTextColor(hdc, COLORREF(p.subtext));
+    about_text(hdc, sep, lx, y2);
+    lx += wpx(sep);
+    SetTextColor(hdc, COLORREF(p.blue));
+    let sr = about_text(hdc, site, lx, y2);
+    app.about_hit.push((sr, 2));
+
+    // OK button (primary).
+    let bw = 96;
+    let bh = 30;
+    let ok = RECT {
+        left: (cw - bw) / 2,
+        top: rc.bottom - bh - 18,
+        right: (cw + bw) / 2,
+        bottom: rc.bottom - 18,
+    };
+    card_round(hdc, &ok, 8, p.blue, p.blue, 1);
+    SetTextColor(hdc, COLORREF(0x00FF_FFFF));
+    let mut okt: Vec<u16> = "OK".encode_utf16().collect();
+    let mut okr = ok;
+    DrawTextW(
+        hdc,
+        &mut okt,
+        &mut okr,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+    );
+    app.about_hit.push((ok, 3));
+
+    SelectObject(hdc, old);
+    let _ = EndPaint(hwnd, &ps);
+}
+
+unsafe extern "system" fn about_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            paint_about(hwnd, app_ptr);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            if !app_ptr.is_null() {
+                let app = &*app_ptr;
+                let x = (lparam.0 & 0xFFFF) as i16 as i32;
+                let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+                for (r, action) in app.about_hit.clone() {
+                    if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+                        match action {
+                            0 => open_url(COFFEE_URL),
+                            1 => open_url(GITHUB_URL),
+                            2 => open_url(SITE_URL),
+                            _ => {
+                                let _ = DestroyWindow(hwnd);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            LRESULT(0)
+        }
+        WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE || wparam.0 as u16 == VK_RETURN => {
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+unsafe fn open_url(url: &str) {
+    let u = wide(url);
+    let _ = ShellExecuteW(
+        HWND::default(),
+        w!("open"),
+        PCWSTR(u.as_ptr()),
+        PCWSTR::null(),
+        PCWSTR::null(),
+        SW_NORMAL,
+    );
 }
 
 fn relaunch_elevated() {
