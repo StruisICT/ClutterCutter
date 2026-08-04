@@ -38,3 +38,39 @@ pub struct FileEntry {
     pub size: i64,
     pub last_modified_ft: i64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_node_default_is_empty() {
+        let n = FolderNode::default();
+        assert!(n.full_path.is_empty());
+        assert_eq!(n.size, 0);
+        assert_eq!(n.file_count, 0);
+        assert!(n.children.is_empty());
+        assert!(n.files.is_empty());
+        assert!(!n.is_access_denied);
+    }
+
+    #[test]
+    fn scan_progress_indeterminate_default() {
+        let p = ScanProgress::default();
+        assert_eq!(p.percent, 0.0);
+        assert_eq!(p.files_scanned, 0);
+    }
+
+    #[test]
+    fn file_entry_clone_is_independent() {
+        let a = FileEntry {
+            name: "x".into(),
+            size: 7,
+            last_modified_ft: 9,
+        };
+        let b = a.clone();
+        assert_eq!(a.name, b.name);
+        assert_eq!(b.size, 7);
+        assert_eq!(b.last_modified_ft, 9);
+    }
+}

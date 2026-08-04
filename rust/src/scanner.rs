@@ -188,19 +188,36 @@ impl Scanner {
 
         if !subdirs.is_empty() {
             if parallel_depth > 0 && subdirs.len() > 1 {
-                let child_parallel = parallel_depth - 1;
+                // Bounded fan-out: round-robin the subdirs across a fixed pool of
+                // worker threads (≈ CPU count), each scanning its share
+                // sequentially. Spawning one thread per subdir instead would
+                // explode into thousands of threads on a wide tree — and on a
+                // slow NAS/DAS that is thread thrash, not throughput. A fixed
+                // pool also naturally throttles concurrent network I/O.
+                let workers = std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+                    .clamp(1, subdirs.len());
+                let mut buckets: Vec<Vec<String>> = (0..workers).map(|_| Vec::new()).collect();
+                for (i, p) in subdirs.iter().enumerate() {
+                    buckets[i % workers].push(p.clone());
+                }
                 let children: Vec<FolderNode> = std::thread::scope(|s| {
-                    let handles: Vec<_> = subdirs
-                        .iter()
-                        .map(|p| {
+                    let handles: Vec<_> = buckets
+                        .into_iter()
+                        .map(|bucket| {
                             let me = self;
-                            let p = p.clone();
-                            s.spawn(move || me.scan_folder(&p, false, child_parallel))
+                            s.spawn(move || {
+                                bucket
+                                    .iter()
+                                    .map(|p| me.scan_folder(p, false, 0))
+                                    .collect::<Vec<_>>()
+                            })
                         })
                         .collect();
                     handles
                         .into_iter()
-                        .map(|h| h.join().unwrap_or_default())
+                        .flat_map(|h| h.join().unwrap_or_default())
                         .collect()
                 });
                 for c in children {
@@ -282,4 +299,115 @@ fn to_long_path(p: &str) -> String {
         return format!(r"\\?\UNC\{rest}");
     }
     format!(r"\\?\{p}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wide_is_nul_terminated() {
+        let w = wide("AB");
+        assert_eq!(w, vec![b'A' as u16, b'B' as u16, 0]);
+    }
+
+    #[test]
+    fn wstr_to_string_stops_at_first_nul() {
+        let buf = [b'H' as u16, b'i' as u16, 0, b'X' as u16];
+        assert_eq!(wstr_to_string(&buf), "Hi");
+        // No NUL: whole buffer is used.
+        let buf2 = [b'O' as u16, b'k' as u16];
+        assert_eq!(wstr_to_string(&buf2), "Ok");
+    }
+
+    #[test]
+    fn to_long_path_prefixes_local_and_unc() {
+        assert_eq!(to_long_path(r"C:\a\b"), r"\\?\C:\a\b");
+        assert_eq!(to_long_path(r"\\server\share\f"), r"\\?\UNC\server\share\f");
+        // Already-prefixed and empty are passed through unchanged.
+        assert_eq!(to_long_path(r"\\?\C:\x"), r"\\?\C:\x");
+        assert_eq!(to_long_path(""), "");
+    }
+
+    #[test]
+    fn scan_counts_sizes_files_and_folders() {
+        // Build a throwaway tree under the system temp dir.
+        let base = std::env::temp_dir().join("cc_scanner_test_a1b2");
+        let _ = std::fs::remove_dir_all(&base);
+        let sub = base.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(base.join("a.txt"), b"12345").unwrap(); // 5 bytes
+        std::fs::write(base.join("b.txt"), b"1234567890").unwrap(); // 10 bytes
+        std::fs::write(sub.join("c.bin"), b"xyz").unwrap(); // 3 bytes
+
+        let root = Scanner::new()
+            .with_track_files(true)
+            .scan(base.to_str().unwrap())
+            .expect("scan should succeed");
+
+        assert_eq!(root.size, 18, "total bytes across the tree");
+        assert_eq!(root.file_count, 3, "all files counted recursively");
+        assert_eq!(root.direct_file_count, 2, "only the 2 files in the root");
+        assert_eq!(root.folder_count, 1, "one subdirectory");
+        // track_files retained the two direct entries.
+        let mut names: Vec<&str> = root.files.iter().map(|f| f.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a.txt", "b.txt"]);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn scan_parallel_fanout_aggregates_all_children() {
+        // >1 top-level subdir + parallelism > 0 takes the bounded worker-pool
+        // branch. Verify the aggregation across worker threads is correct.
+        let base = std::env::temp_dir().join("cc_scanner_test_par9x");
+        let _ = std::fs::remove_dir_all(&base);
+        for d in ["one", "two", "three", "four"] {
+            let sub = base.join(d);
+            std::fs::create_dir_all(&sub).unwrap();
+            std::fs::write(sub.join("f.bin"), vec![0u8; 100]).unwrap();
+        }
+        let root = Scanner::new()
+            .with_parallelism(2)
+            .scan(base.to_str().unwrap())
+            .expect("scan should succeed");
+        assert_eq!(root.size, 400, "4 dirs × 100 bytes");
+        assert_eq!(root.file_count, 4);
+        assert_eq!(root.folder_count, 4);
+        assert_eq!(root.children.len(), 4);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn scan_reports_progress() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let base = std::env::temp_dir().join("cc_scanner_test_prog7");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("a"), b"hello").unwrap();
+
+        // The reporter throttles to ~12/s, so a sub-80ms scan may emit zero
+        // callbacks — we're exercising the with_progress + throttle path, not
+        // asserting a specific count.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c2 = calls.clone();
+        let root = Scanner::new()
+            .with_progress(Box::new(move |_p| {
+                c2.fetch_add(1, Ordering::Relaxed);
+            }))
+            .scan(base.to_str().unwrap())
+            .unwrap();
+        assert_eq!(root.size, 5);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn scan_of_missing_path_is_empty_not_error() {
+        let root = Scanner::new()
+            .scan(r"Z:\definitely\not\here\cc_missing")
+            .expect("missing path yields an empty node, not Err");
+        assert_eq!(root.size, 0);
+        assert_eq!(root.file_count, 0);
+    }
 }

@@ -110,6 +110,20 @@ impl MftScanner {
         let sector_size = vd.BytesPerSector as usize;
         let bytes_per_cluster = vd.BytesPerCluster as i64;
 
+        // Validate the geometry before it feeds divisions and allocations. A
+        // corrupt/hostile volume reporting a zero or absurd record/sector size
+        // would otherwise divide-by-zero (a panic == crash under panic=abort) or
+        // try to allocate a wild buffer. Bail to the walker fallback instead.
+        if record_size == 0
+            || sector_size == 0
+            || !record_size.is_multiple_of(sector_size)
+            || record_size > 64 * 1024
+        {
+            return Err(format!(
+                "Unexpected NTFS geometry (record={record_size}, sector={sector_size})"
+            ));
+        }
+
         // 2. Read MFT record 0 → parse its $DATA data runs (where the MFT itself lives)
         let mut rec0 = vec![0u8; record_size];
         unsafe { read_at(h, vd.MftStartLcn * bytes_per_cluster, &mut rec0)? };
@@ -351,6 +365,7 @@ fn parse_record(buf: &[u8], off: usize, rec_size: usize) -> Option<MftEntry> {
     let mut size: i64 = 0;
     let mut size_found = false;
     let mut last_write_ft: i64 = 0;
+    let mut is_reparse = false;
 
     while p + 16 < rec_end {
         let attr_type = u32_le(buf, p);
@@ -365,11 +380,17 @@ fn parse_record(buf: &[u8], off: usize, rec_size: usize) -> Option<MftEntry> {
         let attr_name_len = buf[p + 9];
 
         if attr_type == 0x10 && non_resident == 0 {
-            // $STANDARD_INFORMATION (resident) — modification time at value+8
+            // $STANDARD_INFORMATION (resident) — modification time at value+8,
+            // the DOS file-attributes DWORD at value+32 (carries the
+            // reparse-point bit for junctions/symlinks).
             let v_off = u16_le(buf, p + 20) as usize;
             let v = p + v_off;
             if v + 16 <= rec_end && last_write_ft == 0 {
                 last_write_ft = i64_le(buf, v + 8);
+            }
+            if v + 36 <= rec_end {
+                const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+                is_reparse = (u32_le(buf, v + 32) & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
             }
         } else if attr_type == 0x30 && non_resident == 0 {
             // $FILE_NAME (resident) — prefer Win32 / Win32&DOS namespace
@@ -422,6 +443,7 @@ fn parse_record(buf: &[u8], off: usize, rec_size: usize) -> Option<MftEntry> {
         name,
         size,
         is_dir,
+        is_reparse,
         last_write_ft,
     })
 }
@@ -474,6 +496,7 @@ struct MftEntry {
     name: String,
     size: i64,
     is_dir: bool,
+    is_reparse: bool,
     last_write_ft: i64,
 }
 
@@ -654,6 +677,13 @@ fn build_subtree(
             Some(e) => e,
             None => continue,
         };
+        // Skip directory junctions / symlinks: the target lives elsewhere in the
+        // tree, so recursing would double-count it (and attach a subtree under
+        // the wrong path). The FindFirstFile walker skips reparse dirs the same
+        // way, so both scan paths agree.
+        if c.is_dir && c.is_reparse {
+            continue;
+        }
         if c.is_dir {
             let child_path = if node_path.ends_with('\\') {
                 format!("{node_path}{}", c.name)
@@ -739,4 +769,135 @@ fn utf16le_to_string(bytes: &[u8]) -> String {
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16_lossy(&units)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn little_endian_readers() {
+        let b = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        assert_eq!(u16_le(&b, 0), 0x0201);
+        assert_eq!(u32_le(&b, 0), 0x0403_0201);
+        assert_eq!(i64_le(&b, 0), 0x0807_0605_0403_0201);
+        // Reading at an offset.
+        assert_eq!(u16_le(&b, 6), 0x0807);
+    }
+
+    #[test]
+    fn name_priority_orders_namespaces() {
+        // Win32&DOS (3) > Win32 (1) > POSIX (0) > DOS (2) > unknown.
+        assert!(name_priority(3) > name_priority(1));
+        assert!(name_priority(1) > name_priority(0));
+        assert!(name_priority(0) > name_priority(2));
+        assert!(name_priority(2) > name_priority(99));
+    }
+
+    #[test]
+    fn utf16le_decodes_and_is_lossy_on_odd_bytes() {
+        // "Hi" in UTF-16LE.
+        let bytes = [b'H', 0, b'i', 0];
+        assert_eq!(utf16le_to_string(&bytes), "Hi");
+        // A trailing odd byte is ignored by chunks_exact (no panic).
+        let odd = [b'A', 0, 0xFF];
+        assert_eq!(utf16le_to_string(&odd), "A");
+    }
+
+    #[test]
+    fn parse_data_runs_decodes_one_run() {
+        // header 0x21: length field 1 byte, offset field 2 bytes.
+        // length = 5 clusters, offset = 0x1000 (relative to prev LCN 0).
+        let buf = [0x21u8, 0x05, 0x00, 0x10, 0x00];
+        let runs = parse_data_runs(&buf, 0, buf.len());
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].length, 5);
+        assert_eq!(runs[0].lcn, 0x1000);
+    }
+
+    #[test]
+    fn parse_data_runs_stops_on_terminator() {
+        // A single run then an explicit 0x00 terminator, then junk that must be
+        // ignored.
+        let buf = [0x11u8, 0x02, 0x04, 0x00, 0xFF, 0xFF];
+        let runs = parse_data_runs(&buf, 0, buf.len());
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].length, 2);
+    }
+
+    #[test]
+    fn apply_fixups_restores_sector_tail_bytes() {
+        // One 512-byte sector record. USA at offset 48; the per-sector fixup
+        // value (bytes 50..52) must be written back to the last 2 bytes of the
+        // sector (510..512).
+        let mut buf = vec![0u8; 512];
+        buf[0..4].copy_from_slice(b"FILE");
+        buf[4..6].copy_from_slice(&48u16.to_le_bytes()); // usa_offset
+        buf[6..8].copy_from_slice(&2u16.to_le_bytes()); // usa_count (seq + 1 sector)
+        buf[50] = 0xAA;
+        buf[51] = 0xBB;
+        apply_fixups(&mut buf, 0, 512, 512);
+        assert_eq!(buf[510], 0xAA);
+        assert_eq!(buf[511], 0xBB);
+    }
+
+    #[test]
+    fn apply_fixups_ignores_non_file_records() {
+        let mut buf = vec![0u8; 64];
+        buf[0..4].copy_from_slice(b"BAAD");
+        let before = buf.clone();
+        apply_fixups(&mut buf, 0, 64, 64);
+        assert_eq!(buf, before, "non-FILE record must be left untouched");
+    }
+
+    fn entry(name: &str, size: i64, is_dir: bool, is_reparse: bool, parent: i64) -> MftEntry {
+        MftEntry {
+            parent_frn: parent,
+            name: name.into(),
+            size,
+            is_dir,
+            is_reparse,
+            last_write_ft: 0,
+        }
+    }
+
+    #[test]
+    fn build_subtree_aggregates_and_skips_reparse_dirs() {
+        // FRN 5 = root, children: dir "sub"(6), file "f.txt"(7, 100B),
+        // junction "link"(8, reparse). Under sub: file "inner.dat"(9, 50B).
+        // The junction must be skipped so its (would-be) subtree isn't counted.
+        let mut entries: Vec<Option<MftEntry>> = (0..10).map(|_| None).collect();
+        entries[5] = Some(entry("root", 0, true, false, 5));
+        entries[6] = Some(entry("sub", 0, true, false, 5));
+        entries[7] = Some(entry("f.txt", 100, false, false, 5));
+        entries[8] = Some(entry("link", 0, true, true, 5));
+        entries[9] = Some(entry("inner.dat", 50, false, false, 6));
+        // A phantom child under the junction that must NOT be reached.
+        // (parent 8 -> would double-count if we recursed into the reparse dir)
+
+        let mut kids: HashMap<i64, Vec<i64>> = HashMap::new();
+        kids.insert(5, vec![6, 7, 8]);
+        kids.insert(6, vec![9]);
+
+        let mut root = FolderNode {
+            full_path: r"C:\".into(),
+            name: "C:\\".into(),
+            ..Default::default()
+        };
+        build_subtree(5, &mut root, r"C:\", &entries, &kids, true);
+
+        assert_eq!(
+            root.size, 150,
+            "100 (f.txt) + 50 (inner.dat); junction excluded"
+        );
+        assert_eq!(root.file_count, 2);
+        assert_eq!(
+            root.folder_count, 1,
+            "only 'sub'; the reparse dir is skipped"
+        );
+        // 'sub' is kept, 'link' (reparse) is not.
+        let child_names: Vec<&str> = root.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(child_names, vec!["sub"]);
+        assert_eq!(root.files.len(), 1, "f.txt tracked at the root");
+    }
 }

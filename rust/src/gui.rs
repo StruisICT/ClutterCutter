@@ -14,6 +14,7 @@
 // re-scans, Esc stops, Backspace goes to parent, Enter drills, Del recycles.
 
 use crate::analysis::{oldest_n_files, top_n_files};
+use crate::format::{format_bytes, format_count, join_path};
 use crate::mft::{is_ntfs_drive_root, MftScanner};
 use crate::scanner::{wide, wstr_to_string, ProgressFn, Scanner};
 use crate::temp::{self, TempFileEntry};
@@ -2959,11 +2960,39 @@ fn scan_one(
     progress: ProgressFn,
 ) -> Result<FolderNode, String> {
     if use_mft {
-        MftScanner::new()
-            .with_cancel(cancel)
-            .with_progress(progress)
+        // Share one progress callback between the MFT attempt and the walker
+        // fallback (ProgressFn is a Box and can't be cloned directly).
+        let shared: Arc<ProgressFn> = Arc::new(progress);
+        let p_mft: ProgressFn = {
+            let s = shared.clone();
+            Box::new(move |sp: &ScanProgress| (s)(sp))
+        };
+        match MftScanner::new()
+            .with_cancel(cancel.clone())
+            .with_progress(p_mft)
             .with_track_files(true)
             .scan(path)
+        {
+            Ok(node) => Ok(node),
+            // The MFT fast path can fail on a volume that is NTFS yet has an
+            // unexpected raw layout (dynamic disk, odd geometry, transient lock,
+            // a removable NTFS stick that won't open raw). Rather than drop the
+            // whole drive from the results, fall back to the ordinary walker —
+            // unless the user cancelled, in which case honor that.
+            Err(_) if !cancel.load(Ordering::Relaxed) => {
+                let p_walk: ProgressFn = {
+                    let s = shared.clone();
+                    Box::new(move |sp: &ScanProgress| (s)(sp))
+                };
+                Scanner::new()
+                    .with_cancel(cancel)
+                    .with_progress(p_walk)
+                    .with_track_files(true)
+                    .scan(path)
+                    .map_err(|e| e.to_string())
+            }
+            Err(e) => Err(e),
+        }
     } else {
         Scanner::new()
             .with_cancel(cancel)
@@ -4541,9 +4570,12 @@ fn format_filetime(raw: i64) -> String {
             return String::new();
         }
     }
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute
+    crate::format::format_ymdhm(
+        local.wYear,
+        local.wMonth,
+        local.wDay,
+        local.wHour,
+        local.wMinute,
     )
 }
 
@@ -5522,56 +5554,9 @@ unsafe fn set_status(status: HWND, text: &str) {
 }
 
 // ---- Formatting ----
-
-fn join_path(dir: &str, leaf: &str) -> String {
-    if dir.ends_with('\\') {
-        format!("{dir}{leaf}")
-    } else {
-        format!("{dir}\\{leaf}")
-    }
-}
-
-fn format_bytes(n: i64) -> String {
-    if n < 1024 {
-        return format!("{n} B");
-    }
-    let mut v = n as f64 / 1024.0;
-    let units = ["KB", "MB", "GB", "TB", "PB"];
-    let mut i = 0;
-    while v >= 1024.0 && i < units.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if v >= 100.0 {
-        format!("{v:.0} {}", units[i])
-    } else if v >= 10.0 {
-        format!("{v:.1} {}", units[i])
-    } else {
-        format!("{v:.2} {}", units[i])
-    }
-}
-
-fn format_count(n: i64) -> String {
-    let s = n.to_string();
-    let bytes = s.as_bytes();
-    let neg = bytes.first() == Some(&b'-');
-    let digits = if neg { &bytes[1..] } else { bytes };
-    let mut out = String::with_capacity(s.len() + s.len() / 3);
-    if neg {
-        out.push('-');
-    }
-    let first_chunk = digits.len() % 3;
-    if first_chunk > 0 {
-        out.push_str(std::str::from_utf8(&digits[..first_chunk]).unwrap());
-    }
-    for (i, c) in digits[first_chunk..].iter().enumerate() {
-        if i % 3 == 0 && !(first_chunk == 0 && i == 0) {
-            out.push(',');
-        }
-        out.push(*c as char);
-    }
-    out
-}
+// The pure formatting helpers (`join_path`, `format_bytes`, `format_count`,
+// `format_ymdhm`) live in `crate::format` so they can be unit-tested without a
+// window. Imported at the top of this module.
 
 #[cfg(test)]
 mod tests {
