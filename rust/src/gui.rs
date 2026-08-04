@@ -1085,16 +1085,25 @@ unsafe extern "system" fn list_header_subclass(
     _id: usize,
     refdata: usize,
 ) -> LRESULT {
+    // Scrolling blit-scrolls the client and only invalidates the newly-exposed
+    // strip, and hot-tracking (WM_MOUSEMOVE) repaints only the row under the
+    // cursor — either way a sliver clipped at the very top of the list (the
+    // expand-box/folder glyph in the header seam, or a duplicated first card in
+    // the side panel) can survive one frame. Repaint the top *synchronously*
+    // with RDW_UPDATENOW so the stale pixels are overwritten in the back buffer
+    // before the frame is presented — a queued InvalidateRect repaints a cycle
+    // later, which shows the sliver for a brief flash. RDW_ALLCHILDREN also
+    // redraws the header on top of any glyph the scroll blitted into its band.
     if msg == WM_MOUSEWHEEL || msg == WM_VSCROLL || msg == WM_HSCROLL {
         let r = DefSubclassProc(hwnd, msg, wparam, lparam);
-        let _ = InvalidateRect(hwnd, None, false);
+        let _ = RedrawWindow(
+            hwnd,
+            None,
+            None,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN,
+        );
         return r;
     }
-    // Hot-tracking (WM_MOUSEMOVE) repaints only the row under the cursor, so a
-    // stale sliver clipped at the very top of the list — the expand-box/folder
-    // glyph in the header seam, or a duplicated first card in the side panel —
-    // never gets redrawn. Refresh the top strip on every move to clear it. It's
-    // a small, double-buffered (flicker-free) repaint.
     if msg == WM_MOUSEMOVE {
         let r = DefSubclassProc(hwnd, msg, wparam, lparam);
         let mut cl = RECT::default();
@@ -1105,7 +1114,12 @@ unsafe extern "system" fn list_header_subclass(
             right: cl.right,
             bottom: (cl.top + 96).min(cl.bottom),
         };
-        let _ = InvalidateRect(hwnd, Some(&strip), false);
+        let _ = RedrawWindow(
+            hwnd,
+            Some(&strip),
+            None,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN,
+        );
         return r;
     }
     if msg == WM_NOTIFY {
