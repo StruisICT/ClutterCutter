@@ -53,15 +53,16 @@ use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificL
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
     ImageList_Create, InitCommonControlsEx, SetWindowTheme, TaskDialogIndirect, CDDS_ITEMPREPAINT,
-    CDDS_PREPAINT, CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
-    CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
-    ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT,
-    LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN,
-    LVM_DELETEITEM, LVM_ENSUREVISIBLE, LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW,
-    LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR,
-    LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW,
-    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER,
-    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE,
+    CDDS_PREPAINT, CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW,
+    CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, ICC_BAR_CLASSES,
+    ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, ILC_COLOR32,
+    INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW,
+    LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_ENSUREVISIBLE,
+    LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM,
+    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
+    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR,
+    LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
+    LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE,
     NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED,
     TASKDIALOGCONFIG, TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON,
     TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN,
@@ -75,8 +76,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
 };
 use windows::Win32::UI::Shell::{
-    IsUserAnAdmin, SHFileOperationW, ShellExecuteW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE,
-    SHFILEOPSTRUCTW,
+    DefSubclassProc, IsUserAnAdmin, SHFileOperationW, SetWindowSubclass, ShellExecuteW,
+    FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE, SHFILEOPSTRUCTW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
@@ -1061,6 +1062,39 @@ unsafe fn draw_expand_box(hdc: HDC, x: i32, cy: i32, expanded: bool, color: u32,
         FillRect(hdc, &vbar, br);
     }
     let _ = DeleteObject(br);
+}
+
+// Subclass of the main list that recolors its column-header text. The themed
+// header otherwise draws near-black text, which is unreadable on the dark header
+// background in dark mode. The header sends its NM_CUSTOMDRAW to its parent (the
+// list), so we intercept it here.
+unsafe extern "system" fn list_header_subclass(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    if msg == WM_NOTIFY {
+        let nmhdr = &*(lparam.0 as *const NMHDR);
+        if nmhdr.code == NM_CUSTOMDRAW {
+            let header = SendMessageW(hwnd, LVM_GETHEADER, WPARAM(0), LPARAM(0)).0;
+            if header != 0 && nmhdr.hwndFrom.0 as isize == header {
+                let app = &*(refdata as *const AppState);
+                let nmcd = &*(lparam.0 as *const NMCUSTOMDRAW);
+                let stage = nmcd.dwDrawStage.0;
+                if stage == CDDS_PREPAINT.0 {
+                    return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
+                }
+                if stage == CDDS_ITEMPREPAINT.0 {
+                    SetTextColor(nmcd.hdc, COLORREF(palette(app.is_dark).text));
+                    return LRESULT(CDRF_NEWFONT as isize);
+                }
+            }
+        }
+    }
+    DefSubclassProc(hwnd, msg, wparam, lparam)
 }
 
 // Owner-draws every column of the main list. Filling each cell's background also
@@ -2218,6 +2252,13 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         LVM_SETEXTENDEDLISTVIEWSTYLE,
         WPARAM(0),
         LPARAM(ext),
+    );
+    // Recolor the column-header text so it stays readable in dark mode.
+    let _ = SetWindowSubclass(
+        app.list,
+        Some(list_header_subclass),
+        1,
+        app as *mut AppState as usize,
     );
 
     // ---- Struis ICT redesign chrome: fonts + top bar + sidebar + breadcrumb ----
