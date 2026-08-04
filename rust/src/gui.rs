@@ -517,6 +517,10 @@ pub fn run() {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
 
+        // Open the "Top largest files" side panel by default; it fills in when
+        // the startup scan below finishes.
+        apply_side_view(hwnd, &mut *app_ptr, SideView::TopFiles);
+
         // Kick off a full scan of every drive right away (alphabetical, since
         // enumerate_drives walks A..Z). The worker posts results back once the
         // message loop below is pumping.
