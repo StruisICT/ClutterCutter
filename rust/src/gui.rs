@@ -1090,6 +1090,24 @@ unsafe extern "system" fn list_header_subclass(
         let _ = InvalidateRect(hwnd, None, false);
         return r;
     }
+    // Hot-tracking (WM_MOUSEMOVE) repaints only the row under the cursor, so a
+    // stale sliver clipped at the very top of the list — the expand-box/folder
+    // glyph in the header seam, or a duplicated first card in the side panel —
+    // never gets redrawn. Refresh the top strip on every move to clear it. It's
+    // a small, double-buffered (flicker-free) repaint.
+    if msg == WM_MOUSEMOVE {
+        let r = DefSubclassProc(hwnd, msg, wparam, lparam);
+        let mut cl = RECT::default();
+        let _ = GetClientRect(hwnd, &mut cl);
+        let strip = RECT {
+            left: cl.left,
+            top: cl.top,
+            right: cl.right,
+            bottom: (cl.top + 96).min(cl.bottom),
+        };
+        let _ = InvalidateRect(hwnd, Some(&strip), false);
+        return r;
+    }
     if msg == WM_NOTIFY {
         let nmhdr = &*(lparam.0 as *const NMHDR);
         if nmhdr.code == NM_CUSTOMDRAW {
