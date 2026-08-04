@@ -14,6 +14,7 @@
 // re-scans, Esc stops, Backspace goes to parent, Enter drills, Del recycles.
 
 mod about;
+mod chrome;
 mod gdi;
 mod geometry;
 mod listview;
@@ -2566,7 +2567,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     let status_wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW,
-        lpfnWndProc: Some(status_proc),
+        lpfnWndProc: Some(chrome::status_proc),
         hInstance: hinstance.into(),
         hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
         hbrBackground: HBRUSH::default(), // fully painted in WM_PAINT
@@ -2595,88 +2596,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     apply_theme(hwnd, app, ThemeMode::Auto);
 }
 
-unsafe extern "system" fn status_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
-    if app_ptr.is_null() {
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
-    }
-    let app = &*app_ptr;
-    match msg {
-        WM_ERASEBKGND => LRESULT(1),
-        WM_PAINT => {
-            let mut ps = PAINTSTRUCT::default();
-            let hdc = BeginPaint(hwnd, &mut ps);
-            let mut rc = RECT::default();
-            let _ = GetClientRect(hwnd, &mut rc);
-            // Light status strip (matches the mockup): window-bg fill, a top
-            // hairline, dark message on the left and muted stats on the right.
-            let p = palette(app.is_dark);
-            let brush = CreateSolidBrush(COLORREF(p.win_bg));
-            FillRect(hdc, &rc, brush);
-            let _ = DeleteObject(brush);
-            let accent = RECT {
-                bottom: rc.top + 1,
-                ..rc
-            };
-            let accent_brush = CreateSolidBrush(COLORREF(p.hairline));
-            FillRect(hdc, &accent, accent_brush);
-            let _ = DeleteObject(accent_brush);
-            let mut buf = [0u16; 1024];
-            let len = GetWindowTextW(hwnd, &mut buf) as usize;
-            if len > 0 {
-                SetBkMode(hdc, TRANSPARENT);
-                SelectObject(hdc, HGDIOBJ(app.font_small.0));
-                // A tab separates the left message from the right-aligned stats
-                // block; either part may be empty. Draw them independently.
-                let tab = buf[..len].iter().position(|&c| c == b'\t' as u16);
-                let (left, right): (&[u16], &[u16]) = match tab {
-                    Some(i) => (&buf[..i], &buf[i + 1..len]),
-                    None => (&buf[..len], &[]),
-                };
-                if !left.is_empty() {
-                    SetTextColor(hdc, COLORREF(p.text));
-                    let mut lrc = RECT {
-                        left: 14,
-                        top: 0,
-                        right: rc.right - 8,
-                        bottom: rc.bottom,
-                    };
-                    let mut lbuf = left.to_vec();
-                    DrawTextW(
-                        hdc,
-                        &mut lbuf,
-                        &mut lrc,
-                        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
-                    );
-                }
-                if !right.is_empty() {
-                    SetTextColor(hdc, COLORREF(p.subtext));
-                    let mut rrc = RECT {
-                        left: 8,
-                        top: 0,
-                        right: rc.right - 14,
-                        bottom: rc.bottom,
-                    };
-                    let mut rbuf = right.to_vec();
-                    DrawTextW(
-                        hdc,
-                        &mut rbuf,
-                        &mut rrc,
-                        DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS,
-                    );
-                }
-            }
-            let _ = EndPaint(hwnd, &ps);
-            LRESULT(0)
-        }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-    }
-}
+// The status-strip WNDPROC lives in `gui::chrome`.
 
 unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let menu = CreateMenu().expect("CreateMenu");
