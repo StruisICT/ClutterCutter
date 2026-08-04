@@ -5438,32 +5438,32 @@ unsafe extern "system" fn about_proc(
     }
 }
 
-unsafe fn open_url(url: &str) {
-    let u = wide(url);
+// One wrapper for every ShellExecuteW call in the app. `params`/`dir` are
+// optional; the wide buffers are kept alive until the call returns.
+unsafe fn shell_exec(verb: &str, file: &str, params: Option<&str>, dir: Option<&str>) {
+    let verb_w = wide(verb);
+    let file_w = wide(file);
+    let params_w = params.map(wide);
+    let dir_w = dir.map(wide);
+    let as_pcwstr =
+        |v: &Option<Vec<u16>>| v.as_ref().map_or(PCWSTR::null(), |b| PCWSTR(b.as_ptr()));
     let _ = ShellExecuteW(
         HWND::default(),
-        w!("open"),
-        PCWSTR(u.as_ptr()),
-        PCWSTR::null(),
-        PCWSTR::null(),
+        PCWSTR(verb_w.as_ptr()),
+        PCWSTR(file_w.as_ptr()),
+        as_pcwstr(&params_w),
+        as_pcwstr(&dir_w),
         SW_NORMAL,
     );
 }
 
+unsafe fn open_url(url: &str) {
+    shell_exec("open", url, None, None);
+}
+
 fn relaunch_elevated() {
     if let Ok(exe) = std::env::current_exe() {
-        let exe_str = exe.to_string_lossy().into_owned();
-        let exe_w: Vec<u16> = exe_str.encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            let _ = ShellExecuteW(
-                HWND::default(),
-                w!("runas"),
-                PCWSTR(exe_w.as_ptr()),
-                PCWSTR::null(),
-                PCWSTR::null(),
-                SW_NORMAL,
-            );
-        }
+        unsafe { shell_exec("runas", &exe.to_string_lossy(), None, None) };
         std::process::exit(0);
     }
 }
@@ -5471,31 +5471,14 @@ fn relaunch_elevated() {
 // ---- Shell actions ----
 
 fn open_in_explorer(path: &str) {
-    unsafe {
-        let path_w = wide(path);
-        let _ = ShellExecuteW(
-            HWND::default(),
-            w!("open"),
-            PCWSTR(path_w.as_ptr()),
-            PCWSTR::null(),
-            PCWSTR::null(),
-            SW_NORMAL,
-        );
-    }
+    unsafe { shell_exec("open", path, None, None) };
 }
 
+// Opens a command prompt with `path` as its working directory (passed as
+// lpDirectory, never as a command argument — so a crafted folder name can't
+// inject a command).
 fn open_cmd_at(path: &str) {
-    unsafe {
-        let path_w = wide(path);
-        let _ = ShellExecuteW(
-            HWND::default(),
-            w!("open"),
-            w!("cmd.exe"),
-            PCWSTR::null(),
-            PCWSTR(path_w.as_ptr()),
-            SW_NORMAL,
-        );
-    }
+    unsafe { shell_exec("open", "cmd.exe", None, Some(path)) };
 }
 
 // Bulk recycle via SHFileOperationW. pFrom is a double-null-terminated list
