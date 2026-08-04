@@ -14,6 +14,7 @@
 // re-scans, Esc stops, Backspace goes to parent, Enter drills, Del recycles.
 
 mod gdi;
+mod geometry;
 mod palette;
 
 use crate::analysis::{oldest_n_files, top_n_files};
@@ -26,6 +27,7 @@ use gdi::{
     card_round, draw_expand_box, draw_file_glyph, draw_folder_glyph, draw_text, fill_rect,
     fill_round, make_font, make_font_face,
 };
+use geometry::{delete_button_rect, nav_button_rects, pill_rect};
 use palette::{palette, ThemeMode};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1636,52 +1638,7 @@ unsafe fn draw_flat_button(
     }
 }
 
-// The theme-toggle pill rectangle, right-aligned within the top bar's client rect.
-fn pill_rect(client: &RECT) -> RECT {
-    let w = 92;
-    let h = 28;
-    let right = client.right - 16;
-    let top = (client.bottom - h) / 2;
-    RECT {
-        left: right - w,
-        top,
-        right,
-        bottom: top + h,
-    }
-}
-
-// The Back / Forward / Up navigation button rectangles on the left of the top bar.
-fn nav_button_rects(client: &RECT) -> [RECT; 3] {
-    let bw = 34;
-    let bh = 32;
-    let gap = 6;
-    let x0 = 14;
-    let ty = (client.bottom - bh) / 2;
-    let mk = |i: i32| {
-        let l = x0 + i * (bw + gap);
-        RECT {
-            left: l,
-            top: ty,
-            right: l + bw,
-            bottom: ty + bh,
-        }
-    };
-    [mk(0), mk(1), mk(2)]
-}
-
-// The Delete-selected button, sitting just right of the three nav buttons with
-// a little extra separation.
-fn delete_button_rect(client: &RECT) -> RECT {
-    let (bw, bh, gap, x0) = (34, 32, 6, 14);
-    let l = x0 + 3 * (bw + gap) + 16;
-    let ty = (client.bottom - bh) / 2;
-    RECT {
-        left: l,
-        top: ty,
-        right: l + bw,
-        bottom: ty + bh,
-    }
-}
+// Top-bar button/pill geometry lives in `gui::geometry`.
 
 // Branded top bar: logo mark + "ClutterCutter" / "Struis ICT", theme pill on the right.
 unsafe extern "system" fn topbar_proc(
