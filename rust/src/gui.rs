@@ -219,7 +219,7 @@ enum ThemeMode {
 
 // What the side panel shows. The tree + selected-folder list are always
 // visible; these are the optional extra views.
-#[derive(Copy, Clone, Default, PartialEq)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
 enum SideView {
     #[default]
     None,
@@ -274,6 +274,20 @@ struct BuiltRow {
 
 // Cross-thread mailbox for scan-all: each drive worker pushes (drive root, result).
 type DriveInbox = Arc<Mutex<Vec<(String, Result<FolderNode, String>)>>>;
+
+// A rendered side-panel row, cached so switching between the Top/Oldest views
+// doesn't re-walk the whole tree. The raw pointers index the current scan tree
+// and are only reused while `tree_version` is unchanged (bumped on any rescan or
+// delete), so they never outlive the tree they point into.
+#[derive(Clone)]
+struct SideRow {
+    name: String,
+    size: String,
+    time: String,
+    path: String,
+    folder: *const FolderNode,
+    file: *const FileEntry,
+}
 
 struct AppState {
     main_hwnd: HWND,
@@ -385,6 +399,10 @@ struct AppState {
     pending_drives: std::collections::HashSet<isize>,
     // Advancing counter that animates the indeterminate progress bars.
     marquee_phase: i32,
+    // Bumped whenever the scan tree is rebuilt or mutated; keys the side-view
+    // cache so a stale (wrong-tree) result is never reused.
+    tree_version: u64,
+    side_cache: std::collections::HashMap<SideView, (u64, Vec<SideRow>)>,
     // At-most-one-in-flight guard for WM_APP_PROGRESS so a fast scanner can't
     // flood the message queue and stall the UI.
     progress_pending: Arc<AtomicBool>,
@@ -495,6 +513,8 @@ pub fn run() {
             drives_done: 0,
             pending_drives: std::collections::HashSet::new(),
             marquee_phase: 0,
+            tree_version: 0,
+            side_cache: std::collections::HashMap::new(),
             scan_all_first_err: None,
             drive_inbox: Arc::new(Mutex::new(Vec::new())),
             progress_pending: Arc::new(AtomicBool::new(false)),
@@ -3296,6 +3316,7 @@ unsafe fn finish_scan_all(app: &mut AppState) {
     app.scan_all_active = false;
     app.scanning = false;
     app.pending_drives.clear();
+    app.tree_version = app.tree_version.wrapping_add(1); // fresh tree — drop stale side caches
     let _ = KillTimer(app.main_hwnd, DRIVE_MARQUEE_TIMER);
     let _ = EnableWindow(app.stop_btn, false);
     let _ = EnableWindow(app.scan_all_btn, true);
@@ -3402,8 +3423,9 @@ unsafe fn on_scan_done(app: &mut AppState) {
     );
 
     app.root_node = Some(Box::new(node));
-    // Insert root item; lazy-populate children as the user expands.
-    // Use a raw pointer so we drop the &-borrow before calling &mut methods.
+    app.tree_version = app.tree_version.wrapping_add(1); // new tree — invalidate side caches
+                                                         // Insert root item; lazy-populate children as the user expands.
+                                                         // Use a raw pointer so we drop the &-borrow before calling &mut methods.
     let root_ptr: *const FolderNode = app
         .root_node
         .as_deref()
@@ -3766,11 +3788,15 @@ unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
 }
 
 unsafe fn populate_side_top_files(app: &mut AppState) {
-    populate_side_from_hits(app, |root| top_n_files(root, TOP_N_FILES));
+    populate_side_view(app, SideView::TopFiles, |root| {
+        top_n_files(root, TOP_N_FILES)
+    });
 }
 
 unsafe fn populate_side_oldest_files(app: &mut AppState) {
-    populate_side_from_hits(app, |root| oldest_n_files(root, TOP_N_FILES));
+    populate_side_view(app, SideView::OldestFiles, |root| {
+        oldest_n_files(root, TOP_N_FILES)
+    });
 }
 
 unsafe fn populate_side_temp(app: &AppState) {
@@ -4108,6 +4134,9 @@ unsafe fn remove_side_rows(list: HWND, indices: &[i32]) {
 // Repaints the views after an in-place deletion, using the tree's current
 // selection. No disk access.
 unsafe fn refresh_after_delete(app: &mut AppState) {
+    // The tree's sizes/tombstones changed, so any cached side-view result is
+    // stale — force a recompute on the next populate.
+    app.tree_version = app.tree_version.wrapping_add(1);
     let hti = SendMessageW(
         app.tree,
         TVM_GETNEXTITEM,
@@ -4144,42 +4173,69 @@ unsafe fn refresh_after_delete(app: &mut AppState) {
     }
 }
 
-unsafe fn populate_side_from_hits<F>(app: &mut AppState, query: F)
+// Populate a side view (Top/Oldest), reusing a cached result when the tree
+// hasn't changed since it was last computed — so toggling views doesn't re-walk
+// the (potentially multi-million-file) tree each time.
+unsafe fn populate_side_view<F>(app: &mut AppState, view: SideView, query: F)
 where
     F: for<'a> FnOnce(&'a FolderNode) -> Vec<crate::analysis::FileHit<'a>>,
 {
-    SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
-    app.side_hits.clear();
+    let rows = side_rows_for(app, view, query);
+    fill_side_list(app, &rows);
+}
+
+// Returns the rendered rows for a view, from cache if still valid, else by
+// walking the tree once and caching the result under the current tree_version.
+unsafe fn side_rows_for<F>(app: &mut AppState, view: SideView, query: F) -> Vec<SideRow>
+where
+    F: for<'a> FnOnce(&'a FolderNode) -> Vec<crate::analysis::FileHit<'a>>,
+{
+    if let Some((ver, rows)) = app.side_cache.get(&view) {
+        if *ver == app.tree_version {
+            return rows.clone();
+        }
+    }
     let root_ptr = match app.root_node.as_deref() {
         Some(r) => r as *const FolderNode,
-        None => return,
+        None => return Vec::new(),
     };
     let root: &FolderNode = &*root_ptr;
     let hits = query(root);
-    let mut row = 0i32;
+    let mut rows = Vec::with_capacity(hits.len());
     for h in hits.iter() {
         // Skip files under a folder that's been recycled in place.
         if app.deleted_nodes.contains(&(h.folder as *const _ as isize)) {
             continue;
         }
-        let full_path = join_path(&h.folder.full_path, &h.file.name);
-        // lParam is the index into side_hits so context actions can recover
-        // the (folder, file) pair.
-        let idx = app.side_hits.len() as isize;
-        app.side_hits
-            .push((h.folder as *const _, h.file as *const _));
+        rows.push(SideRow {
+            name: h.file.name.clone(),
+            size: format_bytes(h.file.size),
+            time: format_filetime(h.file.last_modified_ft),
+            path: join_path(&h.folder.full_path, &h.file.name),
+            folder: h.folder as *const _,
+            file: h.file as *const _,
+        });
+    }
+    app.side_cache
+        .insert(view, (app.tree_version, rows.clone()));
+    rows
+}
+
+// Fills the side list from already-rendered rows (no tree access).
+unsafe fn fill_side_list(app: &mut AppState, rows: &[SideRow]) {
+    SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+    app.side_hits.clear();
+    for (i, r) in rows.iter().enumerate() {
+        // lParam is the index into side_hits so context actions can recover the
+        // (folder, file) pair.
+        app.side_hits.push((r.folder, r.file));
         insert_row_with_param(
             app.side_list,
-            row,
-            &h.file.name,
-            &[
-                format_bytes(h.file.size),
-                format_filetime(h.file.last_modified_ft),
-                full_path,
-            ],
-            idx,
+            i as i32,
+            &r.name,
+            &[r.size.clone(), r.time.clone(), r.path.clone()],
+            i as isize,
         );
-        row += 1;
     }
 }
 
