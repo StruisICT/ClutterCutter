@@ -56,18 +56,18 @@ use windows::Win32::UI::Controls::{
     CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
     CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
     ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT,
-    LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN,
-    LVM_DELETEITEM, LVM_ENSUREVISIBLE, LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW,
-    LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR,
-    LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW,
-    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER,
-    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR,
-    NMITEMACTIVATE, NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED,
-    ODS_SELECTED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE,
-    TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW,
-    TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
-    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
-    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVIR_BOUNDS, LVITEMW, LVM_DELETEALLITEMS,
+    LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMRECT, LVM_GETITEMSTATE,
+    LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_GETTOPINDEX, LVM_INSERTCOLUMNW,
+    LVM_INSERTITEMW, LVM_SCROLL, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE,
+    LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED,
+    LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT,
+    LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW, NM_CLICK,
+    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET,
+    TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
+    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
+    TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
+    TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
@@ -92,8 +92,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
     WM_DRAWITEM, WM_ERASEBKGND, WM_HSCROLL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
     WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR,
-    WM_SIZE, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE,
-    WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    WM_SETREDRAW, WM_SIZE, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD,
+    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -3558,16 +3559,41 @@ unsafe fn toggle_expand(app: &mut AppState, row: usize) {
     if !app.expanded.remove(&nodep) {
         app.expanded.insert(nodep);
     }
+    // Remember the current scroll position. Expanding/collapsing only changes
+    // rows *below* the clicked one, so the rows above (and the top row) keep
+    // their position — restoring the same top row leaves the view steady instead
+    // of resetting to the top and jumping back down via LVM_ENSUREVISIBLE.
+    let top_before = SendMessageW(app.list, LVM_GETTOPINDEX, WPARAM(0), LPARAM(0)).0;
     let cur = &*(app.selected_node as *const FolderNode);
     populate_list_folders(app, cur);
-    SendMessageW(app.list, LVM_ENSUREVISIBLE, WPARAM(row), LPARAM(0));
+    if top_before > 0 {
+        // Row height from item 0's bounding rect; rebuilding leaves the list
+        // scrolled to the top, so scroll down by top_before rows to restore it.
+        let mut ir = RECT {
+            left: LVIR_BOUNDS as i32,
+            ..Default::default()
+        };
+        SendMessageW(
+            app.list,
+            LVM_GETITEMRECT,
+            WPARAM(0),
+            LPARAM(&mut ir as *mut RECT as isize),
+        );
+        let row_h = (ir.bottom - ir.top) as isize;
+        if row_h > 0 {
+            SendMessageW(app.list, LVM_SCROLL, WPARAM(0), LPARAM(top_before * row_h));
+        }
+    }
 }
 
 unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
-    SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
-
     let mut built: Vec<BuiltRow> = Vec::new();
     build_list_rows(&app.expanded, &app.deleted_nodes, node, 0, &mut built);
+
+    // Suspend redraw while we clear and refill: otherwise the listview repaints
+    // on every single insert, which is slow (and flickers) for large folders.
+    SendMessageW(app.list, WM_SETREDRAW, WPARAM(0), LPARAM(0));
+    SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
 
     // The "% of parent" cell (subitem 1) is custom-drawn from list_rows; its
     // stored text stays empty. lParam = the FolderNode pointer for folders (0 for
@@ -3577,6 +3603,13 @@ unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
         insert_row_with_param(app.list, i as i32, &b.name, &b.subs, b.lparam);
         app.list_rows.push(b);
     }
+    SendMessageW(app.list, WM_SETREDRAW, WPARAM(1), LPARAM(0));
+    let _ = RedrawWindow(
+        app.list,
+        None,
+        None,
+        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+    );
 }
 
 unsafe fn populate_side_top_files(app: &mut AppState) {
