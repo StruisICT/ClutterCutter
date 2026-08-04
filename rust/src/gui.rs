@@ -84,20 +84,20 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW, DrawIconEx,
     DrawMenuBar, GetClientRect, GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW,
     GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsWindow,
-    IsZoomed, KillTimer, LoadCursorW, LoadIconW, MoveWindow, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetTimer,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu,
-    TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW,
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, DI_NORMAL, FVIRTKEY, GWLP_USERDATA, HICON, HMENU,
-    IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP,
-    MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW,
-    TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND,
-    WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_HSCROLL, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY,
-    WM_PAINT, WM_SETCURSOR, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER,
-    WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP,
-    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    IsZoomed, KillTimer, LoadCursorW, LoadIconW, MessageBoxW, MoveWindow, PostMessageW,
+    PostQuitMessage, RegisterClassExW, SendMessageW, SetCursor, SetForegroundWindow, SetMenu,
+    SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
+    TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON,
+    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, DI_NORMAL, FVIRTKEY, GWLP_USERDATA,
+    HICON, HMENU, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, IDYES, MB_ICONWARNING, MB_YESNO,
+    MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG,
+    OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND,
+    WM_HSCROLL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SETREDRAW,
+    WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE,
+    WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -269,6 +269,8 @@ struct ListRow {
 // A built row: the ListRow model plus the strings needed to insert it.
 struct BuiltRow {
     lparam: isize, // FolderNode ptr for folders, 0 for files
+    file: isize,   // FileEntry ptr for file rows, 0 for folders
+    owner: isize,  // owning FolderNode ptr for file rows (for path + ancestor math)
     name: String,
     subs: [String; 6],
     row: ListRow,
@@ -425,6 +427,9 @@ struct AppState {
     // pointers stay valid) but are skipped by every view. `recycle_result`
     // carries the background op's success flag back for a failure fallback.
     deleted_nodes: HashSet<isize>,
+    // Recycled individual files (FileEntry pointers), tombstoned the same way so
+    // the tree/side views hide them without the pointers dangling.
+    deleted_files: HashSet<isize>,
     recycle_result: Arc<Mutex<Option<bool>>>,
 }
 
@@ -534,6 +539,7 @@ pub fn run() {
             drive_inbox: Arc::new(Mutex::new(Vec::new())),
             progress_pending: Arc::new(AtomicBool::new(false)),
             deleted_nodes: HashSet::new(),
+            deleted_files: HashSet::new(),
             recycle_result: Arc::new(Mutex::new(None)),
         });
         let app_ptr = Box::into_raw(app);
@@ -1865,6 +1871,20 @@ fn nav_button_rects(client: &RECT) -> [RECT; 3] {
     [mk(0), mk(1), mk(2)]
 }
 
+// The Delete-selected button, sitting just right of the three nav buttons with
+// a little extra separation.
+fn delete_button_rect(client: &RECT) -> RECT {
+    let (bw, bh, gap, x0) = (34, 32, 6, 14);
+    let l = x0 + 3 * (bw + gap) + 16;
+    let ty = (client.bottom - bh) / 2;
+    RECT {
+        left: l,
+        top: ty,
+        right: l + bw,
+        bottom: ty + bh,
+    }
+}
+
 // Branded top bar: logo mark + "ClutterCutter" / "Struis ICT", theme pill on the right.
 unsafe extern "system" fn topbar_proc(
     hwnd: HWND,
@@ -1919,6 +1939,20 @@ unsafe extern "system" fn topbar_proc(
                     DT_SINGLELINE | DT_VCENTER | DT_CENTER,
                 );
             }
+
+            // Delete-selected button (trash glyph, red). Recycles the current
+            // main-list selection after a counting confirmation.
+            let del = delete_button_rect(&rc);
+            card_round(hdc, &del, 6, p.card_bg, p.hairline, 1);
+            SetTextColor(hdc, COLORREF(0x0040_40E0));
+            let mut dg: Vec<u16> = "\u{E74D}".encode_utf16().collect();
+            let mut drc = del;
+            DrawTextW(
+                hdc,
+                &mut dg,
+                &mut drc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
 
             // Theme toggle: a bordered pill "box" with a sliding knob. Both the
             // sun and moon glyphs sit on the track; a rounded knob slides over the
@@ -2016,6 +2050,8 @@ unsafe extern "system" fn topbar_proc(
                 nav_back(app);
             } else if hit(&btns[2]) {
                 nav_forward(app);
+            } else if hit(&delete_button_rect(&rc)) {
+                delete_selected(app.main_hwnd, app);
             } else {
                 let pr = pill_rect(&rc);
                 if hit(&pr) {
@@ -3786,9 +3822,11 @@ fn file_sort_key(f: &FileEntry, col: i32) -> i64 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn build_list_rows(
     expanded: &HashSet<isize>,
     deleted: &HashSet<isize>,
+    deleted_files: &HashSet<isize>,
     node: &FolderNode,
     depth: i32,
     sort_col: i32,
@@ -3821,6 +3859,8 @@ unsafe fn build_list_rows(
         let is_expanded = expanded.contains(&kp);
         out.push(BuiltRow {
             lparam: kp,
+            file: 0,
+            owner: 0,
             name: k.name.clone(),
             subs: [
                 String::new(),
@@ -3839,7 +3879,16 @@ unsafe fn build_list_rows(
             },
         });
         if is_expanded && has_children {
-            build_list_rows(expanded, deleted, k, depth + 1, sort_col, sort_desc, out);
+            build_list_rows(
+                expanded,
+                deleted,
+                deleted_files,
+                k,
+                depth + 1,
+                sort_col,
+                sort_desc,
+                out,
+            );
         }
     }
     let mut files: Vec<&FileEntry> = node.files.iter().collect();
@@ -3857,9 +3906,16 @@ unsafe fn build_list_rows(
             ord
         }
     });
+    let owner_ptr = node as *const FolderNode as isize;
     for f in &files {
+        let fp = *f as *const FileEntry as isize;
+        if deleted_files.contains(&fp) {
+            continue;
+        }
         out.push(BuiltRow {
             lparam: 0,
+            file: fp,
+            owner: owner_ptr,
             name: f.name.clone(),
             subs: [
                 String::new(),
@@ -3922,6 +3978,7 @@ unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
     build_list_rows(
         &app.expanded,
         &app.deleted_nodes,
+        &app.deleted_files,
         node,
         0,
         app.sort_col,
@@ -4130,6 +4187,94 @@ unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget) {
             }
         }
     }
+}
+
+// Delete-button action: recycle the current main-list selection (folders and/or
+// files) after showing exactly how many folders, files and bytes it will free.
+unsafe fn delete_selected(hwnd: HWND, app: &mut AppState) {
+    let indices = selected_indices(app.list);
+    if indices.is_empty() {
+        return;
+    }
+    let mut paths: Vec<String> = Vec::new();
+    let mut folder_ptrs: Vec<isize> = Vec::new();
+    let mut file_targets: Vec<(isize, isize, i64)> = Vec::new(); // (file, owner, size)
+    let (mut n_folders, mut n_files, mut bytes) = (0i64, 0i64, 0i64);
+
+    for &i in &indices {
+        let br = match app.list_rows.get(i as usize) {
+            Some(b) => b,
+            None => continue,
+        };
+        if br.lparam != 0 {
+            let node = &*(br.lparam as *const FolderNode);
+            // Never recycle a whole drive root ("C:\") or the synthetic root.
+            if node.full_path.len() <= 3 {
+                continue;
+            }
+            paths.push(node.full_path.clone());
+            folder_ptrs.push(br.lparam);
+            n_folders += node.folder_count + 1;
+            n_files += node.file_count;
+            bytes += node.size;
+        } else if br.file != 0 && br.owner != 0 {
+            let f = &*(br.file as *const FileEntry);
+            let owner = &*(br.owner as *const FolderNode);
+            paths.push(join_path(&owner.full_path, &f.name));
+            file_targets.push((br.file, br.owner, f.size));
+            n_files += 1;
+            bytes += f.size;
+        }
+    }
+    if paths.is_empty() {
+        return;
+    }
+
+    let prompt = format!(
+        "Move the selected item{} to the Recycle Bin?\n\n\
+         \u{2022} {} folder{}\n\
+         \u{2022} {} file{}\n\
+         \u{2022} {} freed",
+        if paths.len() == 1 { "" } else { "s" },
+        format_count(n_folders),
+        if n_folders == 1 { "" } else { "s" },
+        format_count(n_files),
+        if n_files == 1 { "" } else { "s" },
+        format_bytes(bytes),
+    );
+    if !confirm_delete(hwnd, &prompt) {
+        return;
+    }
+
+    recycle_in_background(hwnd, app, paths);
+    for fp in folder_ptrs {
+        delete_folder_node(app, fp as *const FolderNode);
+    }
+    for (fp, owner, size) in file_targets {
+        app.deleted_files.insert(fp);
+        adjust_ancestors(app, owner as *const FolderNode, size, 1, 0, true);
+    }
+    app.tree_version = app.tree_version.wrapping_add(1);
+    if app.selected_node != 0 {
+        populate_list_folders(app, &*(app.selected_node as *const FolderNode));
+    }
+    match app.side_view {
+        SideView::TopFiles => populate_side_top_files(app),
+        SideView::OldestFiles => populate_side_oldest_files(app),
+        _ => {}
+    }
+}
+
+// Yes/No confirmation for a recycle. Returns true if the user chose Yes.
+unsafe fn confirm_delete(hwnd: HWND, msg: &str) -> bool {
+    let title = wide("Delete");
+    let body = wide(msg);
+    MessageBoxW(
+        hwnd,
+        PCWSTR(body.as_ptr()),
+        PCWSTR(title.as_ptr()),
+        MB_YESNO | MB_ICONWARNING,
+    ) == IDYES
 }
 
 // "Recycle all" panel button: every temp entry in one undoable shell op, in
@@ -4367,8 +4512,11 @@ where
     let hits = query(root);
     let mut rows = Vec::with_capacity(hits.len());
     for h in hits.iter() {
-        // Skip files under a folder that's been recycled in place.
-        if app.deleted_nodes.contains(&(h.folder as *const _ as isize)) {
+        // Skip files under a folder that's been recycled in place, or the file
+        // itself if it was individually recycled.
+        if app.deleted_nodes.contains(&(h.folder as *const _ as isize))
+            || app.deleted_files.contains(&(h.file as *const _ as isize))
+        {
             continue;
         }
         rows.push(SideRow {
