@@ -410,6 +410,10 @@ struct AppState {
     // within each group.
     sort_col: i32,
     sort_desc: bool,
+    // Cached fill brushes for the two list custom-draw paths, rebuilt on theme
+    // change instead of created/destroyed per cell on every repaint.
+    brush_card: HBRUSH,
+    brush_panel: HBRUSH,
     // At-most-one-in-flight guard for WM_APP_PROGRESS so a fast scanner can't
     // flood the message queue and stall the UI.
     progress_pending: Arc<AtomicBool>,
@@ -524,6 +528,8 @@ pub fn run() {
             side_cache: std::collections::HashMap::new(),
             sort_col: load_sort().0,
             sort_desc: load_sort().1,
+            brush_card: HBRUSH::default(),
+            brush_panel: HBRUSH::default(),
             scan_all_first_err: None,
             drive_inbox: Arc::new(Mutex::new(Vec::new())),
             progress_pending: Arc::new(AtomicBool::new(false)),
@@ -783,6 +789,12 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_DESTROY => {
             app.cancel.store(true, Ordering::SeqCst);
+            if !app.brush_card.is_invalid() {
+                let _ = DeleteObject(app.brush_card);
+            }
+            if !app.brush_panel.is_invalid() {
+                let _ = DeleteObject(app.brush_panel);
+            }
             // Persist the window size so next launch opens at the same size.
             // Skip when maximized so we save the restored size, not the maxed one.
             if !IsZoomed(hwnd).as_bool() {
@@ -1283,9 +1295,15 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
         (p.card_bg, p.text)
     };
     // Fill the cell — this is what hides the theme's hot-track hover highlight.
-    let bgb = CreateSolidBrush(COLORREF(bg));
+    // Use the cached theme brush for the (very common) unselected fill; the
+    // selected fill uses the shared system brush. Both avoid a per-cell
+    // create/destroy on every repaint.
+    let bgb = if selected {
+        GetSysColorBrush(COLOR_HIGHLIGHT)
+    } else {
+        app.brush_card
+    };
     FillRect(hdc, &rc, bgb);
-    let _ = DeleteObject(bgb);
     SetBkMode(hdc, TRANSPARENT);
 
     let lr = br.row;
@@ -1497,9 +1515,7 @@ unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
         right: cl.right,
         bottom: rc.bottom,
     };
-    let bgb = CreateSolidBrush(COLORREF(p.panel_bg));
-    FillRect(hdc, &rowbg, bgb);
-    let _ = DeleteObject(bgb);
+    FillRect(hdc, &rowbg, app.brush_panel);
     let card = RECT {
         left: cl.left + 6,
         top: rc.top + 3,
@@ -1649,6 +1665,20 @@ fn palette(is_dark: bool) -> Pal {
 }
 
 // Filled rounded rectangle in `color` (no visible border).
+// (Re)create the cached list fill brushes for the current theme. Called at
+// startup and whenever the theme flips; the old brushes are freed first.
+unsafe fn rebuild_theme_brushes(app: &mut AppState) {
+    let p = palette(app.is_dark);
+    if !app.brush_card.is_invalid() {
+        let _ = DeleteObject(app.brush_card);
+    }
+    if !app.brush_panel.is_invalid() {
+        let _ = DeleteObject(app.brush_panel);
+    }
+    app.brush_card = CreateSolidBrush(COLORREF(p.card_bg));
+    app.brush_panel = CreateSolidBrush(COLORREF(p.panel_bg));
+}
+
 // Fill a rectangle with a solid color — the create/fill/delete triad in one call.
 unsafe fn fill_rect(hdc: HDC, rc: &RECT, color: u32) {
     let br = CreateSolidBrush(COLORREF(color));
@@ -5172,9 +5202,10 @@ unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
 
     app.theme_mode = mode;
     app.is_dark = is_dark;
-    // Force a full frame + children repaint: the title/menu bar live in the
-    // non-client area and don't pick up theme changes from a client-area
-    // invalidate alone. The caption needs the extra nudge below.
+    rebuild_theme_brushes(app); // refresh cached list fill brushes for the new theme
+                                // Force a full frame + children repaint: the title/menu bar live in the
+                                // non-client area and don't pick up theme changes from a client-area
+                                // invalidate alone. The caption needs the extra nudge below.
     nudge_caption_repaint(hwnd);
     let _ = DrawMenuBar(hwnd);
     let _ = RedrawWindow(
