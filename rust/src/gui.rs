@@ -15,6 +15,7 @@
 
 mod gdi;
 mod geometry;
+mod listview;
 mod palette;
 
 use crate::analysis::{oldest_n_files, top_n_files};
@@ -28,6 +29,10 @@ use gdi::{
     fill_round, make_font, make_font_face,
 };
 use geometry::{delete_button_rect, nav_button_rects, pill_rect};
+use listview::{
+    insert_column, insert_row_with_param, list_item_lparam, remove_side_rows, row_selected,
+    selected_indices, selected_list_index, side_subitem_text,
+};
 use palette::{palette, ThemeMode};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -66,13 +71,10 @@ use windows::Win32::UI::Controls::{
     CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
     CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, HDF_SORTDOWN, HDF_SORTUP, HDITEMW, HDI_FORMAT,
     HDM_GETITEMCOUNT, HDM_GETITEMW, HDM_SETITEMW, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
-    ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT,
-    LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVIR_BOUNDS, LVITEMW,
-    LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMRECT,
-    LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_GETTOPINDEX,
-    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SCROLL, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
-    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR,
-    LVM_SETTEXTCOLOR, LVNI_SELECTED, LVN_COLUMNCLICK, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER,
+    ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVIR_BOUNDS,
+    LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_GETHEADER, LVM_GETITEMRECT, LVM_GETTOPINDEX,
+    LVM_SCROLL, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST,
+    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_COLUMNCLICK, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER,
     LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR,
     NMITEMACTIVATE, NMLISTVIEW, NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK,
     ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN,
@@ -1149,10 +1151,6 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
 
 // Reliable per-row selection test: `nmcd.uItemState` is not dependable at the
 // sub-item custom-draw stage, so query the list directly (LVIS_SELECTED = 2).
-unsafe fn row_selected(list: HWND, row: usize) -> bool {
-    SendMessageW(list, LVM_GETITEMSTATE, WPARAM(row), LPARAM(2)).0 & 2 != 0
-}
-
 // Custom-drawn columns of the main list.
 const NAME_COL: i32 = 0;
 const PCT_COL: i32 = 1;
@@ -1443,24 +1441,6 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
 }
 
 // Reads a side-list sub-item's text into a UTF-16 vec.
-unsafe fn side_subitem_text(list: HWND, row: usize, sub: i32) -> Vec<u16> {
-    let mut buf = [0u16; 320];
-    let mut it = LVITEMW {
-        iSubItem: sub,
-        pszText: PWSTR(buf.as_mut_ptr()),
-        cchTextMax: buf.len() as i32,
-        ..Default::default()
-    };
-    let len = SendMessageW(
-        list,
-        LVM_GETITEMTEXTW,
-        WPARAM(row),
-        LPARAM(&mut it as *mut _ as isize),
-    )
-    .0 as usize;
-    buf[..len.min(buf.len())].to_vec()
-}
-
 // Owner-draws each side-panel row as a white rounded card: bold name + blue size
 // on the first line, a muted path on the second — matching the Struis ICT mockup.
 unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LRESULT {
@@ -4189,12 +4169,6 @@ fn collect_folder_ptrs(node: &FolderNode, out: &mut Vec<*const FolderNode>) {
 
 // Deletes the given (ascending) listview row indices, bottom-up so the
 // remaining indices stay valid.
-unsafe fn remove_side_rows(list: HWND, indices: &[i32]) {
-    for &i in indices.iter().rev() {
-        SendMessageW(list, LVM_DELETEITEM, WPARAM(i as usize), LPARAM(0));
-    }
-}
-
 // Repaints the views after an in-place deletion, using the tree's current
 // selection. No disk access.
 unsafe fn refresh_after_delete(app: &mut AppState) {
@@ -4838,54 +4812,6 @@ unsafe fn tree_item_lparam(tree: HWND, hti: isize) -> isize {
         WPARAM(0),
         LPARAM(&mut item as *mut _ as isize),
     );
-    item.lParam.0
-}
-
-unsafe fn selected_indices(list: HWND) -> Vec<i32> {
-    let mut out = Vec::new();
-    let mut idx: i32 = -1;
-    loop {
-        let r = SendMessageW(
-            list,
-            LVM_GETNEXTITEM,
-            WPARAM(idx as usize),
-            LPARAM(LVNI_SELECTED as isize),
-        );
-        let next = r.0 as i32;
-        if next < 0 {
-            break;
-        }
-        out.push(next);
-        idx = next;
-    }
-    out
-}
-
-unsafe fn selected_list_index(list: HWND) -> i32 {
-    let r = SendMessageW(
-        list,
-        LVM_GETNEXTITEM,
-        WPARAM((-1isize) as usize),
-        LPARAM(LVNI_SELECTED as isize),
-    );
-    r.0 as i32
-}
-
-unsafe fn list_item_lparam(list: HWND, idx: i32) -> isize {
-    let mut item = LVITEMW {
-        mask: windows::Win32::UI::Controls::LVIF_PARAM,
-        iItem: idx,
-        ..Default::default()
-    };
-    let r = SendMessageW(
-        list,
-        LVM_GETITEMW,
-        WPARAM(0),
-        LPARAM(&mut item as *mut _ as isize),
-    );
-    if r.0 == 0 {
-        return 0;
-    }
     item.lParam.0
 }
 
@@ -5717,27 +5643,6 @@ fn enumerate_drives() -> Vec<DriveInfo> {
 
 // ---- ListView helpers ----
 
-unsafe fn insert_column(list: HWND, idx: i32, title: &str, width: i32, right_align: bool) {
-    let mut text: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-    let col = LVCOLUMNW {
-        mask: LVCF_TEXT | LVCF_WIDTH | LVCF_FMT,
-        fmt: if right_align {
-            LVCFMT_RIGHT
-        } else {
-            LVCFMT_LEFT
-        },
-        cx: width,
-        pszText: PWSTR(text.as_mut_ptr()),
-        ..Default::default()
-    };
-    SendMessageW(
-        list,
-        LVM_INSERTCOLUMNW,
-        WPARAM(idx as usize),
-        LPARAM(&col as *const _ as isize),
-    );
-}
-
 // Shows a little up/down triangle on the currently-sorted column header (and
 // clears it from the others), via the standard header control's HDF_SORT* bits.
 unsafe fn update_sort_arrows(app: &AppState) {
@@ -5772,46 +5677,6 @@ unsafe fn update_sort_arrows(app: &AppState) {
             HDM_SETITEMW,
             WPARAM(i as usize),
             LPARAM(&mut item as *mut _ as isize),
-        );
-    }
-}
-
-unsafe fn insert_row_with_param(
-    list: HWND,
-    idx: i32,
-    name: &str,
-    subitems: &[String],
-    lparam: isize,
-) {
-    let mut name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-    let item = LVITEMW {
-        mask: LVIF_TEXT | windows::Win32::UI::Controls::LVIF_PARAM,
-        iItem: idx,
-        iSubItem: 0,
-        pszText: PWSTR(name_w.as_mut_ptr()),
-        lParam: LPARAM(lparam),
-        ..Default::default()
-    };
-    SendMessageW(
-        list,
-        LVM_INSERTITEMW,
-        WPARAM(0),
-        LPARAM(&item as *const _ as isize),
-    );
-    for (si, text) in subitems.iter().enumerate() {
-        let mut sub_w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let sub = LVITEMW {
-            mask: LVIF_TEXT,
-            iItem: idx,
-            iSubItem: (si + 1) as i32,
-            pszText: PWSTR(sub_w.as_mut_ptr()),
-            ..Default::default()
-        };
-        SendMessageW(
-            list,
-            LVM_SETITEMTEXTW,
-            WPARAM(idx as usize),
-            LPARAM(&sub as *const _ as isize),
         );
     }
 }
