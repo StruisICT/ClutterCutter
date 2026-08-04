@@ -5027,7 +5027,7 @@ unsafe fn show_about(parent: HWND, app: &mut AppState) {
         lpszClassName: class,
         ..Default::default()
     });
-    let (w, h) = (460, 328);
+    let (w, h) = (460, 300);
     let mut pr = RECT::default();
     let _ = GetWindowRect(parent, &mut pr);
     let x = pr.left + ((pr.right - pr.left) - w) / 2;
@@ -5165,27 +5165,8 @@ unsafe fn paint_about(hwnd: HWND, app_ptr: *mut AppState) {
     let sr = about_text(hdc, site, lx, y2);
     app.about_hit.push((sr, 2));
 
-    // OK button (primary).
-    let bw = 96;
-    let bh = 30;
-    let ok = RECT {
-        left: (cw - bw) / 2,
-        top: rc.bottom - bh - 18,
-        right: (cw + bw) / 2,
-        bottom: rc.bottom - 18,
-    };
-    card_round(hdc, &ok, 8, p.blue, p.blue, 1);
-    SetTextColor(hdc, COLORREF(0x00FF_FFFF));
-    let mut okt: Vec<u16> = "OK".encode_utf16().collect();
-    let mut okr = ok;
-    DrawTextW(
-        hdc,
-        &mut okt,
-        &mut okr,
-        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-    );
-    app.about_hit.push((ok, 3));
-
+    // No OK button: like InLook's About card, the window closes via the
+    // title-bar close (\u{00d7}) or Esc.
     SelectObject(hdc, old);
     let _ = EndPaint(hwnd, &ps);
 }
