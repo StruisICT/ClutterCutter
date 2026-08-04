@@ -272,6 +272,9 @@ struct BuiltRow {
     row: ListRow,
 }
 
+// Cross-thread mailbox for scan-all: each drive worker pushes (drive root, result).
+type DriveInbox = Arc<Mutex<Vec<(String, Result<FolderNode, String>)>>>;
+
 struct AppState {
     main_hwnd: HWND,
     drives: Vec<DriveInfo>,
@@ -376,7 +379,7 @@ struct AppState {
     scan_all_first_err: Option<String>,
     // Each drive scan reports (drive root path, result) so a finished drive can
     // be matched back to its pre-inserted placeholder row.
-    drive_inbox: Arc<Mutex<Vec<(String, Result<FolderNode, String>)>>>,
+    drive_inbox: DriveInbox,
     // Node pointers of drives whose scan is still in flight — their rows render
     // an animated "scanning" bar instead of real numbers.
     pending_drives: std::collections::HashSet<isize>,
