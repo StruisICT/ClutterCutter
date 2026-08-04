@@ -57,18 +57,19 @@ use windows::Win32::UI::Controls::{
     CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
     ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT,
     LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_DELETECOLUMN,
-    LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW,
-    LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
-    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR,
-    LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
-    LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW,
-    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED, TASKDIALOGCONFIG,
-    TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
-    TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN, TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET,
-    TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
-    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
-    TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
-    TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    LVM_DELETEITEM, LVM_ENSUREVISIBLE, LVM_GETHEADER, LVM_GETITEMSTATE, LVM_GETITEMTEXTW,
+    LVM_GETITEMW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR,
+    LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW,
+    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMHDR, NMITEMACTIVATE,
+    NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED,
+    TASKDIALOGCONFIG, TASKDIALOGCONFIG_0, TASKDIALOG_NOTIFICATIONS, TDCBF_OK_BUTTON,
+    TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_HICON_MAIN,
+    TDN_HYPERLINK_CLICKED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN,
+    TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND,
+    TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
+    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
+    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
@@ -120,7 +121,7 @@ const MAIN_FIXED_COLS_W: i32 = 128 + 90 + 90 + 80 + 80 + 120;
 const TOPBAR_H: i32 = 50; // branded strip: logo + title + theme pill
 const SIDEBAR_W: i32 = 244; // left DRIVES column
 const CRUMB_H: i32 = 30; // breadcrumb path bar above the table
-const DRIVE_CARD_H: i32 = 62; // one drive card
+const DRIVE_CARD_H: i32 = 66; // one drive card
 const DRIVE_CARD_GAP: i32 = 8;
 
 // Side panel geometry. The header is a single row: view-switch buttons, the
@@ -250,6 +251,24 @@ enum ScanRequest {
     AllDrives,
 }
 
+// One visible row of the main list, in the flat tree-flattened order.
+#[derive(Clone, Copy)]
+struct ListRow {
+    depth: i32,         // indentation level (0 = top of the current folder)
+    is_folder: bool,    // folder vs file
+    has_children: bool, // folder that can be expanded
+    expanded: bool,     // currently expanded inline
+    pct: f32,           // fraction 0..1 of this row's size vs its parent folder
+}
+
+// A built row: the ListRow model plus the strings needed to insert it.
+struct BuiltRow {
+    lparam: isize, // FolderNode ptr for folders, 0 for files
+    name: String,
+    subs: [String; 6],
+    row: ListRow,
+}
+
 struct AppState {
     main_hwnd: HWND,
     drives: Vec<DriveInfo>,
@@ -317,9 +336,12 @@ struct AppState {
     populated: HashSet<isize>,
     // Path of the FolderNode currently selected in the tree (for context menu).
     selected_node: isize,
-    // Fraction 0..1 of each main-list row's size relative to its parent, indexed
-    // by row. Used to custom-draw the "% of parent" bar column.
-    list_pct: Vec<f32>,
+    // Per-row model for the main list (name, column strings, indent depth, expand
+    // state, % of parent), indexed by row. Custom drawing reads strings from here
+    // rather than re-querying the listview (LVM_GETITEMTEXTW mid-paint corrupts).
+    list_rows: Vec<BuiltRow>,
+    // FolderNode pointers whose children are expanded inline in the main list.
+    expanded: HashSet<isize>,
     // Last scan request — remembered so F5 re-scans the same target.
     last_scan: Option<ScanRequest>,
     theme_mode: ThemeMode,
@@ -441,7 +463,8 @@ pub fn run() {
             item_by_node: HashMap::new(),
             populated: HashSet::new(),
             selected_node: 0,
-            list_pct: Vec::new(),
+            list_rows: Vec::new(),
+            expanded: HashSet::new(),
             last_scan: None,
             theme_mode: ThemeMode::Auto,
             is_dark: false,
@@ -936,6 +959,22 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
         }
     } else if hdr.hwndFrom == app.list {
         match hdr.code {
+            // Single click on a folder's expand box toggles inline expansion.
+            c if c == NM_CLICK => {
+                let act = &*(lparam.0 as *const NMITEMACTIVATE);
+                if act.iItem >= 0 {
+                    let row = act.iItem as usize;
+                    if let Some(lr) = app.list_rows.get(row).map(|b| b.row) {
+                        if lr.is_folder && lr.has_children {
+                            let gx = 4 + lr.depth * TREE_INDENT;
+                            let px = act.ptAction.x;
+                            if px >= gx && px < gx + TREE_GLYPH_W {
+                                toggle_expand(app, row);
+                            }
+                        }
+                    }
+                }
+            }
             c if c == NM_DBLCLK => {
                 let act = &*(lparam.0 as *const NMITEMACTIVATE);
                 if act.iItem >= 0 {
@@ -982,14 +1021,51 @@ unsafe fn row_selected(list: HWND, row: usize) -> bool {
     SendMessageW(list, LVM_GETITEMSTATE, WPARAM(row), LPARAM(2)).0 & 2 != 0
 }
 
-// Custom-drawn columns of the main list: Name (icon + text) and the "% of
-// parent" bar.
+// Custom-drawn columns of the main list.
 const NAME_COL: i32 = 0;
 const PCT_COL: i32 = 1;
+const MODIFIED_COL: i32 = 6;
+// Tree layout: indent per depth level, and the width reserved for the expand box.
+const TREE_INDENT: i32 = 16;
+const TREE_GLYPH_W: i32 = 16;
 
-// Owner-draws the Name column (a folder/file glyph + the name) and the
-// "% of parent" column (a green proportional bar + percentage), matching the
-// Struis ICT mockup. Every other subitem falls through to default rendering.
+// A small tree expand/collapse box (a bordered square with a "−" when expanded,
+// "+" when collapsed) centred vertically at `cy`, left edge at `x`.
+unsafe fn draw_expand_box(hdc: HDC, x: i32, cy: i32, expanded: bool, color: u32, bg: u32) {
+    let s = 11;
+    let t = cy - s / 2;
+    let box_rc = RECT {
+        left: x,
+        top: t,
+        right: x + s,
+        bottom: t + s,
+    };
+    card_round(hdc, &box_rc, 3, bg, color, 1);
+    let br = CreateSolidBrush(COLORREF(color));
+    let midy = t + s / 2;
+    let hbar = RECT {
+        left: x + 3,
+        top: midy,
+        right: x + s - 3,
+        bottom: midy + 1,
+    };
+    FillRect(hdc, &hbar, br);
+    if !expanded {
+        let midx = x + s / 2;
+        let vbar = RECT {
+            left: midx,
+            top: t + 3,
+            right: midx + 1,
+            bottom: t + s - 3,
+        };
+        FillRect(hdc, &vbar, br);
+    }
+    let _ = DeleteObject(br);
+}
+
+// Owner-draws every column of the main list. Filling each cell's background also
+// suppresses the themed hover-highlight that would otherwise show through. The
+// Name column renders the tree indent + expand box + folder/file glyph + name.
 unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LRESULT {
     let lv = &*lv;
     let stage = lv.nmcd.dwDrawStage.0;
@@ -999,12 +1075,15 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     if stage == CDDS_ITEMPREPAINT.0 {
         return LRESULT(CDRF_NOTIFYSUBITEMDRAW as isize);
     }
-    let sub = lv.iSubItem;
-    if stage != (CDDS_SUBITEM.0 | CDDS_ITEMPREPAINT.0) || (sub != NAME_COL && sub != PCT_COL) {
+    if stage != (CDDS_SUBITEM.0 | CDDS_ITEMPREPAINT.0) {
         return LRESULT(CDRF_DODEFAULT as isize);
     }
-
+    let sub = lv.iSubItem;
     let row = lv.nmcd.dwItemSpec;
+    let br = match app.list_rows.get(row) {
+        Some(b) => b,
+        None => return LRESULT(CDRF_SKIPDEFAULT as isize),
+    };
     let hdc = lv.nmcd.hdc;
     let rc = lv.nmcd.rc;
     let selected = row_selected(app.list, row);
@@ -1017,40 +1096,30 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     } else {
         (p.card_bg, p.text)
     };
+    // Fill the cell — this is what hides the theme's hot-track hover highlight.
     let bgb = CreateSolidBrush(COLORREF(bg));
     FillRect(hdc, &rc, bgb);
     let _ = DeleteObject(bgb);
     SetBkMode(hdc, TRANSPARENT);
 
+    let lr = br.row;
+    let cy = (rc.top + rc.bottom) / 2;
+
     if sub == NAME_COL {
-        // Folder rows carry the node pointer in lParam; file rows carry 0.
-        let is_folder = list_item_lparam(app.list, row as i32) != 0;
-        // Flat folder (blue) / page (grey) glyph, drawn with GDI.
-        let icx = rc.left + 16;
-        let icy = (rc.top + rc.bottom) / 2;
-        if is_folder {
-            draw_folder_glyph(hdc, icx, icy, if selected { fg } else { p.blue });
-        } else {
-            let outline = if selected { fg } else { p.subtext };
-            draw_file_glyph(hdc, icx, icy, outline, bg);
+        let glyph_x = rc.left + 4 + lr.depth * TREE_INDENT;
+        if lr.is_folder && lr.has_children {
+            let c = if selected { fg } else { p.subtext };
+            draw_expand_box(hdc, glyph_x, cy, lr.expanded, c, bg);
         }
-        let mut buf = [0u16; 260];
-        let mut it = LVITEMW {
-            iSubItem: NAME_COL,
-            pszText: PWSTR(buf.as_mut_ptr()),
-            cchTextMax: buf.len() as i32,
-            ..Default::default()
-        };
-        let len = SendMessageW(
-            app.list,
-            LVM_GETITEMTEXTW,
-            WPARAM(row),
-            LPARAM(&mut it as *mut _ as isize),
-        )
-        .0 as usize;
-        let mut name = buf[..len.min(buf.len())].to_vec();
+        let icx = glyph_x + TREE_GLYPH_W + 8;
+        if lr.is_folder {
+            draw_folder_glyph(hdc, icx, cy, if selected { fg } else { p.blue });
+        } else {
+            draw_file_glyph(hdc, icx, cy, if selected { fg } else { p.subtext }, bg);
+        }
+        let mut name: Vec<u16> = br.name.encode_utf16().collect();
         let mut nrc = RECT {
-            left: rc.left + 34,
+            left: icx + 14,
             top: rc.top,
             right: rc.right - 4,
             bottom: rc.bottom,
@@ -1065,51 +1134,81 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
         return LRESULT(CDRF_SKIPDEFAULT as isize);
     }
 
-    // PCT_COL: green rounded bar + percentage text.
-    let pct = app
-        .list_pct
-        .get(row)
-        .copied()
-        .unwrap_or(0.0)
-        .clamp(0.0, 1.0);
-    let text_w = 52;
-    let bar_left = rc.left + 6;
-    let bar_right = rc.right - text_w - 4;
-    let bar_h = 8;
-    let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
-    if bar_right - bar_left > 16 {
-        let track = RECT {
-            left: bar_left,
-            top: bar_top,
-            right: bar_right,
-            bottom: bar_top + bar_h,
-        };
-        fill_round(hdc, &track, 4, if selected { 0x00C8_C8C8 } else { p.track });
-        let fill_w = ((bar_right - bar_left) as f32 * pct).round() as i32;
-        if fill_w >= 4 {
-            let fill = RECT {
+    if sub == PCT_COL {
+        let pct = lr.pct.clamp(0.0, 1.0);
+        let text_w = 52;
+        let bar_left = rc.left + 6;
+        let bar_right = rc.right - text_w - 4;
+        let bar_h = 8;
+        let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
+        if bar_right - bar_left > 16 {
+            let track = RECT {
                 left: bar_left,
                 top: bar_top,
-                right: bar_left + fill_w,
+                right: bar_right,
                 bottom: bar_top + bar_h,
             };
-            fill_round(hdc, &fill, 4, p.green);
+            fill_round(hdc, &track, 4, if selected { 0x00C8_C8C8 } else { p.track });
+            let fill_w = ((bar_right - bar_left) as f32 * pct).round() as i32;
+            if fill_w >= 4 {
+                let fill = RECT {
+                    left: bar_left,
+                    top: bar_top,
+                    right: bar_left + fill_w,
+                    bottom: bar_top + bar_h,
+                };
+                fill_round(hdc, &fill, 4, p.green);
+            }
         }
+        let mut txt: Vec<u16> = format!("{:.1}%", pct * 100.0).encode_utf16().collect();
+        let mut trc = RECT {
+            left: rc.right - text_w - 2,
+            top: rc.top,
+            right: rc.right - 6,
+            bottom: rc.bottom,
+        };
+        SetTextColor(hdc, COLORREF(fg));
+        DrawTextW(
+            hdc,
+            &mut txt,
+            &mut trc,
+            DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
+        );
+        return LRESULT(CDRF_SKIPDEFAULT as isize);
     }
-    let mut txt: Vec<u16> = format!("{:.1}%", pct * 100.0).encode_utf16().collect();
-    let mut trc = RECT {
-        left: rc.right - text_w - 2,
-        top: rc.top,
-        right: rc.right - 6,
-        bottom: rc.bottom,
-    };
+
+    // Detail columns: Size/Own size/Files/Folders are right-aligned; Modified is
+    // left-aligned (matching the column headers). `subs[sub-1]` maps a column to
+    // its stored string (subs[0] is the empty %-of-parent placeholder).
+    let mut txt: Vec<u16> = br.subs[(sub - 1) as usize].encode_utf16().collect();
     SetTextColor(hdc, COLORREF(fg));
-    DrawTextW(
-        hdc,
-        &mut txt,
-        &mut trc,
-        DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
-    );
+    let (fmt, trc) = if sub == MODIFIED_COL {
+        (
+            DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+            RECT {
+                left: rc.left + 6,
+                top: rc.top,
+                right: rc.right - 4,
+                bottom: rc.bottom,
+            },
+        )
+    } else {
+        (
+            DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS,
+            RECT {
+                left: rc.left + 4,
+                top: rc.top,
+                right: rc.right - 8,
+                bottom: rc.bottom,
+            },
+        )
+    };
+    let mut trc = trc;
+    // DrawTextW on an empty slice dereferences the Vec's dangling pointer and
+    // faults — file rows have empty own-size/files/folders cells, so skip them.
+    if !txt.is_empty() {
+        DrawTextW(hdc, &mut txt, &mut trc, fmt);
+    }
     LRESULT(CDRF_SKIPDEFAULT as isize)
 }
 
@@ -1519,11 +1618,11 @@ unsafe extern "system" fn topbar_proc(
             SetBkMode(hdc, TRANSPARENT);
             let btns = nav_button_rects(&rc);
             let enabled = [
+                nav_parent_hti(app) != 0,
                 app.nav_pos > 0,
                 app.nav_pos >= 0 && (app.nav_pos as usize) < app.nav_hist.len().saturating_sub(1),
-                nav_parent_hti(app) != 0,
             ];
-            let glyphs = ["\u{E72B}", "\u{E72A}", "\u{E80F}"]; // Back, Forward, Home (top level)
+            let glyphs = ["\u{E80F}", "\u{E72B}", "\u{E72A}"]; // Home (top level), Back, Forward
             let old = SelectObject(hdc, HGDIOBJ(app.font_icon.0));
             for (i, br) in btns.iter().enumerate() {
                 card_round(hdc, br, 6, p.card_bg, p.hairline, 1);
@@ -1630,11 +1729,11 @@ unsafe extern "system" fn topbar_proc(
             let hit = |r: &RECT| x >= r.left && x < r.right && y >= r.top && y < r.bottom;
             let btns = nav_button_rects(&rc);
             if hit(&btns[0]) {
-                nav_back(app);
-            } else if hit(&btns[1]) {
-                nav_forward(app);
-            } else if hit(&btns[2]) {
                 nav_up(app);
+            } else if hit(&btns[1]) {
+                nav_back(app);
+            } else if hit(&btns[2]) {
+                nav_forward(app);
             } else {
                 let pr = pill_rect(&rc);
                 if hit(&pr) {
@@ -1803,7 +1902,9 @@ unsafe extern "system" fn sidebar_proc(
                     left: bl,
                     top: cy + 42,
                     right: card_rc.right - 12,
-                    bottom: cy + DRIVE_CARD_H - 4,
+                    // Pinned so the padding below the last line matches the ~8px
+                    // above the first line (card is now 66px tall).
+                    bottom: cy + 58,
                 };
                 SetTextColor(hdc, COLORREF(p.subtext));
                 DrawTextW(
@@ -3283,34 +3384,31 @@ unsafe fn nav_up(app: &mut AppState) {
     }
 }
 
-unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
-    SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
-    app.list_pct.clear();
-
-    // Percentages are relative to the parent folder's total size; guard the
-    // divide-by-zero for empty folders.
+// Recursively flattens `node`'s subfolders (then files) into rows, descending
+// into any folder whose pointer is in `expanded`. Subfolders first, files last,
+// each group sorted case-insensitively; tombstoned folders are skipped.
+unsafe fn build_list_rows(
+    expanded: &HashSet<isize>,
+    deleted: &HashSet<isize>,
+    node: &FolderNode,
+    depth: i32,
+    out: &mut Vec<BuiltRow>,
+) {
     let total = node.size.max(1) as f32;
-
-    // Subfolders first, then the folder's own files — each group sorted
-    // case-insensitively by name. Tombstoned (recycled-in-place) folders are
-    // skipped.
     let mut folders: Vec<&FolderNode> = node
         .children
         .iter()
-        .filter(|c| !app.deleted_nodes.contains(&(*c as *const _ as isize)))
+        .filter(|c| !deleted.contains(&(*c as *const _ as isize)))
         .collect();
     folders.sort_by_key(|n| n.name.to_lowercase());
-
-    let mut row = 0i32;
     for k in &folders {
-        // The "% of parent" cell (subitem 1) is custom-drawn from list_pct; its
-        // stored text stays empty. lParam = the FolderNode pointer, so
-        // double-click drills into it and the context menu can act on it.
-        insert_row_with_param(
-            app.list,
-            row,
-            &k.name,
-            &[
+        let kp = *k as *const _ as isize;
+        let has_children = !k.children.is_empty() || !k.files.is_empty();
+        let is_expanded = expanded.contains(&kp);
+        out.push(BuiltRow {
+            lparam: kp,
+            name: k.name.clone(),
+            subs: [
                 String::new(),
                 format_bytes(k.size),
                 format_bytes(k.own_size),
@@ -3318,23 +3416,25 @@ unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
                 format_count(k.folder_count),
                 format_filetime(k.last_modified_ft),
             ],
-            *k as *const _ as isize,
-        );
-        app.list_pct.push(k.size as f32 / total);
-        row += 1;
+            row: ListRow {
+                depth,
+                is_folder: true,
+                has_children,
+                expanded: is_expanded,
+                pct: k.size as f32 / total,
+            },
+        });
+        if is_expanded && has_children {
+            build_list_rows(expanded, deleted, k, depth + 1, out);
+        }
     }
-
     let mut files: Vec<&FileEntry> = node.files.iter().collect();
     files.sort_by_key(|f| f.name.to_lowercase());
     for f in &files {
-        // lParam 0 marks a file row: not drillable, and folder-only actions
-        // (drill / open-in-explorer) skip it. A file has no own/child breakdown,
-        // so only Size and Modified are filled.
-        insert_row_with_param(
-            app.list,
-            row,
-            &f.name,
-            &[
+        out.push(BuiltRow {
+            lparam: 0,
+            name: f.name.clone(),
+            subs: [
                 String::new(),
                 format_bytes(f.size),
                 String::new(),
@@ -3342,10 +3442,45 @@ unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
                 String::new(),
                 format_filetime(f.last_modified_ft),
             ],
-            0,
-        );
-        app.list_pct.push(f.size as f32 / total);
-        row += 1;
+            row: ListRow {
+                depth,
+                is_folder: false,
+                has_children: false,
+                expanded: false,
+                pct: f.size as f32 / total,
+            },
+        });
+    }
+}
+
+// Flips the expand state of the folder at `row` and rebuilds the list from the
+// current top-level folder, keeping the toggled row on screen.
+unsafe fn toggle_expand(app: &mut AppState, row: usize) {
+    let nodep = list_item_lparam(app.list, row as i32);
+    if nodep == 0 || app.selected_node == 0 {
+        return;
+    }
+    if !app.expanded.remove(&nodep) {
+        app.expanded.insert(nodep);
+    }
+    let cur = &*(app.selected_node as *const FolderNode);
+    populate_list_folders(app, cur);
+    SendMessageW(app.list, LVM_ENSUREVISIBLE, WPARAM(row), LPARAM(0));
+}
+
+unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
+    SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+
+    let mut built: Vec<BuiltRow> = Vec::new();
+    build_list_rows(&app.expanded, &app.deleted_nodes, node, 0, &mut built);
+
+    // The "% of parent" cell (subitem 1) is custom-drawn from list_rows; its
+    // stored text stays empty. lParam = the FolderNode pointer for folders (0 for
+    // files), so double-click drills into it and the context menu can act on it.
+    app.list_rows.clear();
+    for (i, b) in built.into_iter().enumerate() {
+        insert_row_with_param(app.list, i as i32, &b.name, &b.subs, b.lparam);
+        app.list_rows.push(b);
     }
 }
 
