@@ -32,10 +32,10 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
     FillRect, GetSysColor, GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints, Polygon,
     Polyline, RedrawWindow, ReleaseDC, RoundRect, ScreenToClient, SelectObject, SetBkMode,
-    SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT,
-    DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER,
-    HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, PS_SOLID, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME,
-    RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
+    SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT,
+    DRAW_TEXT_FORMAT, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_LEFT, DT_RIGHT,
+    DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, PS_SOLID, RDW_ALLCHILDREN,
+    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -763,9 +763,7 @@ unsafe fn erase_theme_bg(app: &AppState, hwnd: HWND, hdc: HDC) -> LRESULT {
     let mut rc = RECT::default();
     let _ = GetClientRect(hwnd, &mut rc);
     if app.is_dark {
-        let b = CreateSolidBrush(COLORREF(0x0020_2020));
-        FillRect(hdc, &rc, b);
-        let _ = DeleteObject(b);
+        fill_rect(hdc, &rc, 0x0020_2020);
     } else {
         FillRect(hdc, &rc, GetSysColorBrush(COLOR_BTNFACE));
     }
@@ -1335,18 +1333,17 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     // the Size column and leave the rest blank.
     if app.pending_drives.contains(&br.lparam) {
         if sub == 2 {
-            let mut txt: Vec<u16> = "Scanning\u{2026}".encode_utf16().collect();
-            let mut trc = RECT {
+            let trc = RECT {
                 left: rc.left + 4,
                 top: rc.top,
                 right: rc.right - 8,
                 bottom: rc.bottom,
             };
             SetTextColor(hdc, COLORREF(if selected { fg } else { p.blue }));
-            DrawTextW(
+            draw_text(
                 hdc,
-                &mut txt,
-                &mut trc,
+                "Scanning\u{2026}",
+                &trc,
                 DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
             );
         }
@@ -1588,6 +1585,25 @@ fn palette(is_dark: bool) -> Pal {
 }
 
 // Filled rounded rectangle in `color` (no visible border).
+// Fill a rectangle with a solid color — the create/fill/delete triad in one call.
+unsafe fn fill_rect(hdc: HDC, rc: &RECT, color: u32) {
+    let br = CreateSolidBrush(COLORREF(color));
+    FillRect(hdc, rc, br);
+    let _ = DeleteObject(br);
+}
+
+// Draw a single string into `rc` with the given DrawTextW flags. Guards the
+// empty-string case: DrawTextW on an empty slice dereferences the Vec's dangling
+// pointer and faults, so every call routes through here.
+unsafe fn draw_text(hdc: HDC, s: &str, rc: &RECT, flags: DRAW_TEXT_FORMAT) {
+    if s.is_empty() {
+        return;
+    }
+    let mut v: Vec<u16> = s.encode_utf16().collect();
+    let mut r = *rc;
+    DrawTextW(hdc, &mut v, &mut r, flags);
+}
+
 unsafe fn fill_round(hdc: HDC, rc: &RECT, radius: i32, color: u32) {
     let br = CreateSolidBrush(COLORREF(color));
     let pen = CreatePen(PS_SOLID, 1, COLORREF(color));
@@ -1776,17 +1792,13 @@ unsafe extern "system" fn topbar_proc(
             let _ = GetClientRect(hwnd, &mut rc);
             let p = palette(app.is_dark);
 
-            let b = CreateSolidBrush(COLORREF(p.win_bg));
-            FillRect(hdc, &rc, b);
-            let _ = DeleteObject(b);
+            fill_rect(hdc, &rc, p.win_bg);
             // Bottom hairline.
             let hair = RECT {
                 top: rc.bottom - 1,
                 ..rc
             };
-            let hb = CreateSolidBrush(COLORREF(p.hairline));
-            FillRect(hdc, &hair, hb);
-            let _ = DeleteObject(hb);
+            fill_rect(hdc, &hair, p.hairline);
 
             // Navigation buttons (Back / Forward / Up) on the left, replacing the
             // logo + title. Each is a rounded button with a Segoe MDL2 glyph;
