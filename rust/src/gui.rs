@@ -82,20 +82,20 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW, DrawIconEx,
     DrawMenuBar, GetClientRect, GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW,
     GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsWindow,
-    IsZoomed, LoadCursorW, LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
-    SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetWindowLongPtrW,
-    SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateAcceleratorW,
-    TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
-    CW_USEDEFAULT, DI_NORMAL, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW, IDC_SIZEWE,
-    IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING,
-    MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
-    WM_DRAWITEM, WM_ERASEBKGND, WM_HSCROLL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETCURSOR,
-    WM_SETREDRAW, WM_SIZE, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD,
-    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP,
-    WS_VISIBLE,
+    IsZoomed, KillTimer, LoadCursorW, LoadIconW, MoveWindow, PostMessageW, PostQuitMessage,
+    RegisterClassExW, SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetTimer,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu,
+    TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW,
+    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, DI_NORMAL, FVIRTKEY, GWLP_USERDATA, HICON, HMENU,
+    IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_POPUP,
+    MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL, SW_SHOW,
+    TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND,
+    WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_HSCROLL, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY,
+    WM_PAINT, WM_SETCURSOR, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER,
+    WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -172,6 +172,8 @@ const ID_MENU_VIEW_DETACH: u16 = 5310;
 const TOP_N_FILES: usize = 100;
 
 // Custom messages
+// Timer that advances the indeterminate "scanning" bars on drive rows.
+const DRIVE_MARQUEE_TIMER: usize = 1;
 const WM_APP_PROGRESS: u32 = WM_APP + 1;
 const WM_APP_DONE: u32 = WM_APP + 2;
 const WM_APP_TEMP_DONE: u32 = WM_APP + 3;
@@ -372,7 +374,14 @@ struct AppState {
     drives_expected: usize,
     drives_done: usize,
     scan_all_first_err: Option<String>,
-    drive_inbox: Arc<Mutex<Vec<Result<FolderNode, String>>>>,
+    // Each drive scan reports (drive root path, result) so a finished drive can
+    // be matched back to its pre-inserted placeholder row.
+    drive_inbox: Arc<Mutex<Vec<(String, Result<FolderNode, String>)>>>,
+    // Node pointers of drives whose scan is still in flight — their rows render
+    // an animated "scanning" bar instead of real numbers.
+    pending_drives: std::collections::HashSet<isize>,
+    // Advancing counter that animates the indeterminate progress bars.
+    marquee_phase: i32,
     // At-most-one-in-flight guard for WM_APP_PROGRESS so a fast scanner can't
     // flood the message queue and stall the UI.
     progress_pending: Arc<AtomicBool>,
@@ -481,6 +490,8 @@ pub fn run() {
             scan_all_active: false,
             drives_expected: 0,
             drives_done: 0,
+            pending_drives: std::collections::HashSet::new(),
+            marquee_phase: 0,
             scan_all_first_err: None,
             drive_inbox: Arc::new(Mutex::new(Vec::new())),
             progress_pending: Arc::new(AtomicBool::new(false)),
@@ -694,6 +705,14 @@ unsafe extern "system" fn wnd_proc(
         }
         m if m == WM_APP_TEMP_DONE => {
             on_temp_scan_done(app);
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == DRIVE_MARQUEE_TIMER => {
+            // Advance the indeterminate bars on drives still being scanned.
+            if app.scan_all_active && !app.pending_drives.is_empty() {
+                app.marquee_phase = app.marquee_phase.wrapping_add(1);
+                let _ = InvalidateRect(app.list, None, false);
+            }
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -1217,12 +1236,42 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     }
 
     if sub == PCT_COL {
+        let bar_h = 8;
+        let bar_left = rc.left + 6;
+        let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
+        // Drives still being scanned show an indeterminate marquee instead of a
+        // %-of-parent bar, so the user can see work is in progress.
+        if app.pending_drives.contains(&br.lparam) {
+            let bar_right = rc.right - 8;
+            let track = RECT {
+                left: bar_left,
+                top: bar_top,
+                right: bar_right,
+                bottom: bar_top + bar_h,
+            };
+            fill_round(hdc, &track, 4, p.track);
+            let track_w = bar_right - bar_left;
+            if track_w > 20 {
+                let seg_w = track_w / 3;
+                let span = track_w + seg_w;
+                let pos = (app.marquee_phase * 6).rem_euclid(span) - seg_w;
+                let seg_left = (bar_left + pos).clamp(bar_left, bar_right);
+                let seg_right = (bar_left + pos + seg_w).clamp(bar_left, bar_right);
+                if seg_right > seg_left {
+                    let seg = RECT {
+                        left: seg_left,
+                        top: bar_top,
+                        right: seg_right,
+                        bottom: bar_top + bar_h,
+                    };
+                    fill_round(hdc, &seg, 4, p.blue);
+                }
+            }
+            return LRESULT(CDRF_SKIPDEFAULT as isize);
+        }
         let pct = lr.pct.clamp(0.0, 1.0);
         let text_w = 52;
-        let bar_left = rc.left + 6;
         let bar_right = rc.right - text_w - 4;
-        let bar_h = 8;
-        let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
         if bar_right - bar_left > 16 {
             let track = RECT {
                 left: bar_left,
@@ -1256,6 +1305,28 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
             &mut trc,
             DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
         );
+        return LRESULT(CDRF_SKIPDEFAULT as isize);
+    }
+
+    // A drive still being scanned has no real numbers yet: show "Scanning…" in
+    // the Size column and leave the rest blank.
+    if app.pending_drives.contains(&br.lparam) {
+        if sub == 2 {
+            let mut txt: Vec<u16> = "Scanning\u{2026}".encode_utf16().collect();
+            let mut trc = RECT {
+                left: rc.left + 4,
+                top: rc.top,
+                right: rc.right - 8,
+                bottom: rc.bottom,
+            };
+            SetTextColor(hdc, COLORREF(if selected { fg } else { p.blue }));
+            DrawTextW(
+                hdc,
+                &mut txt,
+                &mut trc,
+                DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
+            );
+        }
         return LRESULT(CDRF_SKIPDEFAULT as isize);
     }
 
@@ -3050,24 +3121,30 @@ unsafe fn start_scan_all(hwnd: HWND, app: &mut AppState) {
     begin_scan_ui(app, &format!("Scanning {n} drives..."));
     app.last_scan = Some(ScanRequest::AllDrives);
 
-    // Create the synthetic root now, with capacity reserved for every drive so
-    // the incremental pushes in on_drive_done never reallocate the Vec (which
-    // would dangle the raw child pointers the tree items hold).
+    // Create the synthetic root now with a placeholder child per drive, so every
+    // drive shows in the list immediately (each with an animated "scanning" bar)
+    // and gets filled in place as its scan finishes. Capacity is exactly the
+    // drive count, and finished drives replace their slot in place, so the Vec
+    // never reallocates — keeping the raw child pointers the tree items hold valid.
     let mut root = FolderNode {
         full_path: String::new(), // synthetic — shell actions no-op on it
         name: "All drives".to_string(),
         ..Default::default()
     };
     root.children = Vec::with_capacity(n);
+    for (path, _) in &targets {
+        root.children.push(FolderNode {
+            full_path: path.clone(),
+            name: path.clone(),
+            ..Default::default()
+        });
+    }
     app.root_node = Some(Box::new(root));
     let root_ptr = app.root_node.as_deref().unwrap() as *const FolderNode;
     let hti = insert_tree_item(app.tree, 0, &*root_ptr, false);
-    // Root is inserted while its children Vec is still empty, so the tree would
-    // treat it as a leaf; force the has-children flag so drives appended later
-    // show under an expandable node.
     set_tree_item_has_children(app.tree, hti);
     app.item_by_node.insert(root_ptr as isize, hti);
-    app.populated.insert(hti); // drives are appended by hand, not lazily
+    app.populated.insert(hti); // drives are added by hand, not lazily
     app.selected_node = root_ptr as isize;
     SendMessageW(
         app.tree,
@@ -3076,12 +3153,38 @@ unsafe fn start_scan_all(hwnd: HWND, app: &mut AppState) {
         LPARAM(hti),
     );
 
+    // Insert a tree item for each placeholder drive and mark it pending.
+    app.pending_drives.clear();
+    let drive_ptrs: Vec<isize> = {
+        let root = app.root_node.as_deref().unwrap();
+        root.children
+            .iter()
+            .map(|c| c as *const FolderNode as isize)
+            .collect()
+    };
+    for &dp in &drive_ptrs {
+        let child = &*(dp as *const FolderNode);
+        let dhti = insert_tree_item(app.tree, hti, child, true);
+        app.item_by_node.insert(dp, dhti);
+        app.pending_drives.insert(dp);
+    }
+    SendMessageW(
+        app.tree,
+        TVM_EXPAND,
+        WPARAM(TVE_EXPAND.0 as usize),
+        LPARAM(hti),
+    );
+    populate_list_folders(app, &*root_ptr);
+
     app.scan_all_active = true;
     app.drives_expected = n;
     app.drives_done = 0;
     app.scan_all_first_err = None;
+    app.marquee_phase = 0;
     let inbox = Arc::new(Mutex::new(Vec::new()));
     app.drive_inbox = inbox.clone();
+    // Animate the pending bars until every drive is in.
+    SetTimer(hwnd, DRIVE_MARQUEE_TIMER, 60, None);
 
     let send_hwnd = SendHwnd(hwnd.0 as isize);
     for (path, use_mft) in targets {
@@ -3092,7 +3195,7 @@ unsafe fn start_scan_all(hwnd: HWND, app: &mut AppState) {
             let res =
                 scan_one(&path, use_mft, cancel, progress).map_err(|e| format!("{path}: {e}"));
             if let Ok(mut q) = inbox.lock() {
-                q.push(res);
+                q.push((path, res));
             }
             unsafe {
                 let _ = PostMessageW(send_hwnd.to_hwnd(), WM_APP_DRIVE_DONE, WPARAM(0), LPARAM(0));
@@ -3101,21 +3204,22 @@ unsafe fn start_scan_all(hwnd: HWND, app: &mut AppState) {
     }
 }
 
-// One or more drives finished: drain the inbox, append each into the root, and
-// refresh the visible views. Runs on the UI thread.
+// One or more drives finished: drain the inbox, fill each drive's placeholder
+// row in place, and refresh the visible views. Runs on the UI thread.
 unsafe fn on_drive_done(app: &mut AppState) {
     if !app.scan_all_active {
         return;
     }
-    let drained: Vec<Result<FolderNode, String>> = {
+    let drained: Vec<(String, Result<FolderNode, String>)> = {
         let mut q = app.drive_inbox.lock().unwrap();
         std::mem::take(&mut *q)
     };
-    for res in drained {
+    for (path, res) in drained {
         app.drives_done += 1;
         match res {
-            Ok(node) => append_drive(app, node),
+            Ok(node) => fill_drive(app, &path, node),
             Err(e) => {
+                stop_drive_pending(app, &path);
                 if app.scan_all_first_err.is_none() {
                     app.scan_all_first_err = Some(e);
                 }
@@ -3123,7 +3227,27 @@ unsafe fn on_drive_done(app: &mut AppState) {
         }
     }
 
-    if app.drives_done >= app.drives_expected {
+    // Recompute the root totals from the (small) set of drive children.
+    if let Some(root) = app.root_node.as_deref_mut() {
+        let (mut size, mut fc, mut folc) = (0i64, 0i64, 0i64);
+        for c in &root.children {
+            size += c.size;
+            fc += c.file_count;
+            folc += c.folder_count + 1;
+        }
+        root.size = size;
+        root.file_count = fc;
+        root.folder_count = folc;
+    }
+
+    // Repaint the drive rows (filled numbers replace the animated bars).
+    if let Some(root_ptr) = app.root_node.as_deref().map(|r| r as *const FolderNode) {
+        if app.selected_node == root_ptr as isize {
+            populate_list_folders(app, &*root_ptr);
+        }
+    }
+
+    if app.pending_drives.is_empty() {
         finish_scan_all(app);
     } else if let Some(root) = app.root_node.as_deref() {
         set_status(
@@ -3139,33 +3263,28 @@ unsafe fn on_drive_done(app: &mut AppState) {
     }
 }
 
-// Pushes a finished drive into the root and inserts its (alphabetically
-// sorted) tree item, keeping the root expanded so drives stay visible.
-unsafe fn append_drive(app: &mut AppState, node: FolderNode) {
-    let root_ptr = match app.root_node.as_deref() {
-        Some(r) => r as *const FolderNode,
+// Replace a drive's placeholder FolderNode with its scan result, in place (the
+// slot address — and thus the tree item's pointer — is preserved).
+unsafe fn fill_drive(app: &mut AppState, path: &str, node: FolderNode) {
+    let root = match app.root_node.as_deref_mut() {
+        Some(r) => r,
         None => return,
     };
-    let root = app.root_node.as_deref_mut().unwrap();
-    root.size += node.size;
-    root.file_count += node.file_count;
-    root.folder_count += node.folder_count + 1;
-    root.children.push(node); // capacity reserved in start_scan_all — no realloc
-    let drive_ptr = root.children.last().unwrap() as *const FolderNode;
-
-    if let Some(&root_hti) = app.item_by_node.get(&(root_ptr as isize)) {
-        let hti = insert_tree_item(app.tree, root_hti, &*drive_ptr, true);
-        app.item_by_node.insert(drive_ptr as isize, hti);
-        SendMessageW(
-            app.tree,
-            TVM_EXPAND,
-            WPARAM(TVE_EXPAND.0 as usize),
-            LPARAM(root_hti),
-        );
+    if let Some(slot) = root.children.iter_mut().find(|c| c.full_path == path) {
+        let ptr = slot as *const FolderNode as isize;
+        *slot = node;
+        app.pending_drives.remove(&ptr);
     }
-    // Keep the main list (showing the root's drives) current if root is selected.
-    if app.selected_node == root_ptr as isize {
-        populate_list_folders(app, &*root_ptr);
+}
+
+// A drive failed: stop animating its row (it will show as an empty/0-byte entry
+// and the status line notes the skip).
+fn stop_drive_pending(app: &mut AppState, path: &str) {
+    if let Some(root) = app.root_node.as_deref() {
+        if let Some(slot) = root.children.iter().find(|c| c.full_path == path) {
+            let ptr = slot as *const FolderNode as isize;
+            app.pending_drives.remove(&ptr);
+        }
     }
 }
 
@@ -3173,6 +3292,8 @@ unsafe fn append_drive(app: &mut AppState, node: FolderNode) {
 unsafe fn finish_scan_all(app: &mut AppState) {
     app.scan_all_active = false;
     app.scanning = false;
+    app.pending_drives.clear();
+    let _ = KillTimer(app.main_hwnd, DRIVE_MARQUEE_TIMER);
     let _ = EnableWindow(app.stop_btn, false);
     let _ = EnableWindow(app.scan_all_btn, true);
     for b in &app.drive_buttons {
