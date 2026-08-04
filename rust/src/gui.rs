@@ -55,20 +55,22 @@ use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
     ImageList_Create, InitCommonControlsEx, SetWindowTheme, CDDS_ITEMPREPAINT, CDDS_PREPAINT,
     CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
-    CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
-    ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCFMT_RIGHT, LVCF_FMT,
-    LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVIR_BOUNDS, LVITEMW, LVM_DELETEALLITEMS,
-    LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMRECT, LVM_GETITEMSTATE,
-    LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_GETTOPINDEX, LVM_INSERTCOLUMNW,
-    LVM_INSERTITEMW, LVM_SCROLL, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE,
-    LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED,
-    LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT,
-    LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE, NMLVCUSTOMDRAW, NM_CLICK,
-    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET,
-    TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
-    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
-    TVM_SETBKCOLOR, TVM_SETITEMW, TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
-    TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, HDF_SORTDOWN, HDF_SORTUP, HDITEMW, HDI_FORMAT,
+    HDM_GETITEMCOUNT, HDM_GETITEMW, HDM_SETITEMW, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
+    ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVCFMT_LEFT,
+    LVCFMT_RIGHT, LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVIR_BOUNDS, LVITEMW,
+    LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_DELETEITEM, LVM_GETHEADER, LVM_GETITEMRECT,
+    LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW, LVM_GETNEXTITEM, LVM_GETTOPINDEX,
+    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SCROLL, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
+    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMTEXTW, LVM_SETTEXTBKCOLOR,
+    LVM_SETTEXTCOLOR, LVNI_SELECTED, LVN_COLUMNCLICK, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR,
+    NMITEMACTIVATE, NMLISTVIEW, NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK,
+    ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN,
+    TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND,
+    TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
+    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
+    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
@@ -403,6 +405,11 @@ struct AppState {
     // cache so a stale (wrong-tree) result is never reused.
     tree_version: u64,
     side_cache: std::collections::HashMap<SideView, (u64, Vec<SideRow>)>,
+    // Main-list sort: column index (0=Name..6=Modified) and descending flag,
+    // persisted to sort.cfg. Folders still sort before files; the column orders
+    // within each group.
+    sort_col: i32,
+    sort_desc: bool,
     // At-most-one-in-flight guard for WM_APP_PROGRESS so a fast scanner can't
     // flood the message queue and stall the UI.
     progress_pending: Arc<AtomicBool>,
@@ -515,6 +522,8 @@ pub fn run() {
             marquee_phase: 0,
             tree_version: 0,
             side_cache: std::collections::HashMap::new(),
+            sort_col: load_sort().0,
+            sort_desc: load_sort().1,
             scan_all_first_err: None,
             drive_inbox: Arc::new(Mutex::new(Vec::new())),
             progress_pending: Arc::new(AtomicBool::new(false)),
@@ -633,6 +642,40 @@ fn save_window_size(w: i32, h: i32) {
             let _ = std::fs::create_dir_all(dir);
         }
         let _ = std::fs::write(&p, format!("{w} {h}"));
+    }
+}
+
+fn sort_cfg_path() -> Option<std::path::PathBuf> {
+    let appdata = std::env::var_os("APPDATA")?;
+    Some(
+        std::path::Path::new(&appdata)
+            .join("ClutterCutter")
+            .join("sort.cfg"),
+    )
+}
+
+// The main-list sort (column index + descending flag) persists across runs. The
+// default — column 0 (Name), ascending — reproduces the historical order.
+fn load_sort() -> (i32, bool) {
+    let default = (0i32, false);
+    let Some(p) = sort_cfg_path() else {
+        return default;
+    };
+    let Ok(s) = std::fs::read_to_string(&p) else {
+        return default;
+    };
+    let mut it = s.split_whitespace();
+    let col = it.next().and_then(|x| x.parse().ok()).unwrap_or(default.0);
+    let desc = it.next().map(|x| x == "1").unwrap_or(default.1);
+    ((col).clamp(0, 6), desc)
+}
+
+fn save_sort(col: i32, desc: bool) {
+    if let Some(p) = sort_cfg_path() {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&p, format!("{col} {}", desc as i32));
     }
 }
 
@@ -1043,6 +1086,27 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
             c if c == NM_RCLICK => {
                 app.ctx_target = CtxTarget::MainList;
                 show_context_menu(hwnd, app);
+            }
+            // Click a column header to sort by it; click the same column again to
+            // reverse. The choice persists across runs.
+            c if c == LVN_COLUMNCLICK => {
+                let nmlv = &*(lparam.0 as *const NMLISTVIEW);
+                let col = nmlv.iSubItem;
+                if (0..=6).contains(&col) {
+                    if app.sort_col == col {
+                        app.sort_desc = !app.sort_desc;
+                    } else {
+                        app.sort_col = col;
+                        // Name reads best ascending; size/count/date default to
+                        // descending (largest / most / newest first).
+                        app.sort_desc = col != 0;
+                    }
+                    save_sort(app.sort_col, app.sort_desc);
+                    update_sort_arrows(app);
+                    if app.selected_node != 0 {
+                        populate_list_folders(app, &*(app.selected_node as *const FolderNode));
+                    }
+                }
             }
             _ => {}
         }
@@ -2682,6 +2746,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     insert_column(app.list, 4, "FILES", 80, true);
     insert_column(app.list, 5, "FOLDERS", 80, true);
     insert_column(app.list, 6, "MODIFIED", 120, false);
+    update_sort_arrows(app); // reflect the persisted/default sort on the header
 
     let status_initial = if app.is_admin {
         "Ready (Administrator — MFT fast path available on NTFS drives)"
@@ -3670,11 +3735,34 @@ unsafe fn nav_up(app: &mut AppState) {
 // Recursively flattens `node`'s subfolders (then files) into rows, descending
 // into any folder whose pointer is in `expanded`. Subfolders first, files last,
 // each group sorted case-insensitively; tombstoned folders are skipped.
+// Numeric sort key for a folder under the given column (Name is handled
+// separately as a string). Columns: 1/2=Size, 3=Own size, 4=Files, 5=Folders,
+// 6=Modified.
+fn folder_sort_key(n: &FolderNode, col: i32) -> i64 {
+    match col {
+        3 => n.own_size,
+        4 => n.file_count,
+        5 => n.folder_count,
+        6 => n.last_modified_ft,
+        _ => n.size,
+    }
+}
+
+fn file_sort_key(f: &FileEntry, col: i32) -> i64 {
+    match col {
+        6 => f.last_modified_ft,
+        4 | 5 => 0, // files have no child/folder counts
+        _ => f.size,
+    }
+}
+
 unsafe fn build_list_rows(
     expanded: &HashSet<isize>,
     deleted: &HashSet<isize>,
     node: &FolderNode,
     depth: i32,
+    sort_col: i32,
+    sort_desc: bool,
     out: &mut Vec<BuiltRow>,
 ) {
     let total = node.size.max(1) as f32;
@@ -3683,7 +3771,20 @@ unsafe fn build_list_rows(
         .iter()
         .filter(|c| !deleted.contains(&(*c as *const _ as isize)))
         .collect();
-    folders.sort_by_key(|n| n.name.to_lowercase());
+    folders.sort_by(|a, b| {
+        let ord = if sort_col == 0 {
+            a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        } else {
+            folder_sort_key(a, sort_col)
+                .cmp(&folder_sort_key(b, sort_col))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        };
+        if sort_desc {
+            ord.reverse()
+        } else {
+            ord
+        }
+    });
     for k in &folders {
         let kp = *k as *const _ as isize;
         let has_children = !k.children.is_empty() || !k.files.is_empty();
@@ -3708,11 +3809,24 @@ unsafe fn build_list_rows(
             },
         });
         if is_expanded && has_children {
-            build_list_rows(expanded, deleted, k, depth + 1, out);
+            build_list_rows(expanded, deleted, k, depth + 1, sort_col, sort_desc, out);
         }
     }
     let mut files: Vec<&FileEntry> = node.files.iter().collect();
-    files.sort_by_key(|f| f.name.to_lowercase());
+    files.sort_by(|a, b| {
+        let ord = if sort_col == 0 {
+            a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        } else {
+            file_sort_key(a, sort_col)
+                .cmp(&file_sort_key(b, sort_col))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        };
+        if sort_desc {
+            ord.reverse()
+        } else {
+            ord
+        }
+    });
     for f in &files {
         out.push(BuiltRow {
             lparam: 0,
@@ -3775,7 +3889,15 @@ unsafe fn toggle_expand(app: &mut AppState, row: usize) {
 
 unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
     let mut built: Vec<BuiltRow> = Vec::new();
-    build_list_rows(&app.expanded, &app.deleted_nodes, node, 0, &mut built);
+    build_list_rows(
+        &app.expanded,
+        &app.deleted_nodes,
+        node,
+        0,
+        app.sort_col,
+        app.sort_desc,
+        &mut built,
+    );
 
     // Suspend redraw while we clear and refill: otherwise the listview repaints
     // on every single insert, which is slow (and flickers) for large folders.
@@ -5680,6 +5802,44 @@ unsafe fn insert_column(list: HWND, idx: i32, title: &str, width: i32, right_ali
         WPARAM(idx as usize),
         LPARAM(&col as *const _ as isize),
     );
+}
+
+// Shows a little up/down triangle on the currently-sorted column header (and
+// clears it from the others), via the standard header control's HDF_SORT* bits.
+unsafe fn update_sort_arrows(app: &AppState) {
+    let header = SendMessageW(app.list, LVM_GETHEADER, WPARAM(0), LPARAM(0)).0;
+    if header == 0 {
+        return;
+    }
+    let hwnd = HWND(header as _);
+    let count = SendMessageW(hwnd, HDM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 as i32;
+    for i in 0..count {
+        let mut item = HDITEMW {
+            mask: HDI_FORMAT,
+            ..Default::default()
+        };
+        SendMessageW(
+            hwnd,
+            HDM_GETITEMW,
+            WPARAM(i as usize),
+            LPARAM(&mut item as *mut _ as isize),
+        );
+        item.fmt.0 &= !(HDF_SORTUP.0 | HDF_SORTDOWN.0);
+        if i == app.sort_col {
+            item.fmt.0 |= if app.sort_desc {
+                HDF_SORTDOWN.0
+            } else {
+                HDF_SORTUP.0
+            };
+        }
+        item.mask = HDI_FORMAT;
+        SendMessageW(
+            hwnd,
+            HDM_SETITEMW,
+            WPARAM(i as usize),
+            LPARAM(&mut item as *mut _ as isize),
+        );
+    }
 }
 
 unsafe fn insert_row_with_param(
