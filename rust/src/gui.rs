@@ -95,17 +95,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
     CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
     GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
-    IsDialogMessageW, IsZoomed, KillTimer, LoadCursorW, LoadIconW, MessageBoxW, MoveWindow,
-    PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow, SetMenu,
-    SetParent, SetTimer, SetWindowLongPtrW, SetWindowTextW, ShowWindow, TrackPopupMenu,
+    IsDialogMessageW, IsZoomed, KillTimer, LoadCursorW, LoadIconW, LoadImageW, MessageBoxW,
+    MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow,
+    SetMenu, SetParent, SetTimer, SetWindowLongPtrW, SetWindowTextW, ShowWindow, TrackPopupMenu,
     TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW,
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW,
-    IDC_SIZEWE, IDI_APPLICATION, IDYES, MB_ICONWARNING, MB_YESNO, MF_BYCOMMAND, MF_POPUP,
-    MF_SEPARATOR, MF_STRING, MSG, SM_CXVSCROLL, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN,
-    TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY,
-    WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT,
-    WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CHILD,
-    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    IDC_SIZEWE, IDI_APPLICATION, IDYES, IMAGE_ICON, LR_DEFAULTCOLOR, MB_ICONWARNING, MB_YESNO,
+    MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, SM_CXVSCROLL, SW_HIDE, SW_NORMAL,
+    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND,
+    WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE,
+    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW,
+    WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -704,6 +705,32 @@ unsafe fn load_app_icon() -> HICON {
         }
     }
     LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
+}
+
+// Load the app icon at an exact pixel size, letting Windows pick the best-matching
+// frame from the multi-resolution .ico (16..256). LoadIconW only ever returns the
+// system default size (32x32), which then has to be upscaled to fit — that's what
+// makes the About icon look distorted. Loading at the draw size renders crisp.
+//
+// The returned icon is OWNED (LoadImageW without LR_SHARED) and must be freed with
+// DestroyIcon by the caller. Returns an invalid HICON on failure — callers should
+// fall back to the shared load_app_icon() and must NOT destroy that one.
+unsafe fn load_app_icon_sized(px: i32) -> HICON {
+    #[allow(clippy::manual_dangling_ptr)]
+    let icon_ordinal = PCWSTR(1 as *const u16);
+    if let Ok(h) = GetModuleHandleW(None) {
+        if let Ok(handle) = LoadImageW(
+            HINSTANCE(h.0),
+            icon_ordinal,
+            IMAGE_ICON,
+            px,
+            px,
+            LR_DEFAULTCOLOR,
+        ) {
+            return HICON(handle.0);
+        }
+    }
+    HICON::default()
 }
 
 fn accel(vk: u16, cmd: u16) -> ACCEL {
