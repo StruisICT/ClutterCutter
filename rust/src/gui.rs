@@ -103,10 +103,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
     SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND,
-    WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_HSCROLL, WM_LBUTTONDOWN, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETREDRAW,
-    WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE,
-    WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE,
+    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW,
+    WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -1887,7 +1887,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     let panel_wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
-        lpfnWndProc: Some(panel_proc),
+        lpfnWndProc: Some(chrome::panel_proc),
         hInstance: hinstance.into(),
         hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
         hbrBackground: GetSysColorBrush(COLOR_BTNFACE),
@@ -4032,64 +4032,7 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
     SelectObject(hdc, old);
     let _ = EndPaint(panel, &ps);
 }
-
-unsafe extern "system" fn panel_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
-    if app_ptr.is_null() {
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
-    }
-    let app = &mut *app_ptr;
-    match msg {
-        WM_SIZE => {
-            panel_layout(app, hwnd);
-            LRESULT(0)
-        }
-        WM_ERASEBKGND => erase_theme_bg(app, hwnd, HDC(wparam.0 as _)),
-        WM_PAINT => {
-            paint_panel_header(app, hwnd);
-            LRESULT(0)
-        }
-        // Flat-style Detach / Recycle-all buttons (owner-drawn, secondary).
-        WM_DRAWITEM => {
-            draw_flat_button(
-                app,
-                lparam.0 as *const DRAWITEMSTRUCT,
-                false,
-                palette(app.is_dark).panel_bg,
-            );
-            LRESULT(1)
-        }
-        // Clicks on the view-switch toolbar buttons switch the side view.
-        WM_LBUTTONDOWN => {
-            let x = (lparam.0 & 0xFFFF) as i16 as i32;
-            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
-            for (i, br) in panel_view_buttons().iter().enumerate() {
-                if x >= br.left && x < br.right && y >= br.top && y < br.bottom {
-                    let view = PANEL_VIEW_BUTTONS[i].0;
-                    if view != app.side_view {
-                        apply_side_view(app.main_hwnd, app, view);
-                    }
-                    break;
-                }
-            }
-            LRESULT(0)
-        }
-        // The header buttons and the side list are children of the panel, so
-        // their commands/notifications land here — route them to the shared
-        // handlers on the main window.
-        WM_COMMAND => {
-            on_command(app.main_hwnd, app, (wparam.0 & 0xFFFF) as u16);
-            LRESULT(0)
-        }
-        WM_NOTIFY => on_notify(app.main_hwnd, app, lparam),
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-    }
-}
+// The side-panel WNDPROC lives in `gui::chrome`.
 
 // The splitter + detached-panel-frame WNDPROCs live in `gui::chrome`.
 

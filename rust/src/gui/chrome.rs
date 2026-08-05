@@ -16,8 +16,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, Se
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, GetClientRect, GetCursorPos, GetWindowLongPtrW, GetWindowTextW, LoadCursorW,
     MoveWindow, SendMessageW, SetCursor, GWLP_USERDATA, IDC_SIZEWE, WM_CLOSE, WM_COMMAND,
-    WM_DRAWITEM, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_SETCURSOR,
-    WM_SIZE,
+    WM_DRAWITEM, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NOTIFY, WM_PAINT,
+    WM_SETCURSOR, WM_SIZE,
 };
 
 use crate::format::format_bytes;
@@ -27,9 +27,10 @@ use super::gdi::{card_round, fill_rect, fill_round};
 use super::geometry::{delete_button_rect, nav_button_rects, pill_rect};
 use super::palette::{palette, ThemeMode};
 use super::{
-    apply_theme, delete_selected, draw_flat_button, erase_theme_bg, layout, nav_back, nav_forward,
-    nav_parent_hti, nav_up, toggle_detach, tree_item_lparam, AppState, DRIVE_CARD_GAP,
-    DRIVE_CARD_H, ID_DRIVE_BASE, SIDEBAR_W, SPLIT_W,
+    apply_side_view, apply_theme, delete_selected, draw_flat_button, erase_theme_bg, layout,
+    nav_back, nav_forward, nav_parent_hti, nav_up, on_command, on_notify, paint_panel_header,
+    panel_layout, panel_view_buttons, toggle_detach, tree_item_lparam, AppState, DRIVE_CARD_GAP,
+    DRIVE_CARD_H, ID_DRIVE_BASE, PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
 };
 
 // Bottom status strip: window-bg fill, a top hairline, a dark message on the
@@ -702,6 +703,67 @@ pub(crate) unsafe extern "system" fn sidebar_proc(
             }
             LRESULT(0)
         }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// The side-panel frame: paints its header (title + view-switch toolbar +
+// Detach/Recycle-all owner-draw buttons), switches views on toolbar clicks, and
+// routes its children's commands/notifications to the main window's handlers.
+pub(crate) unsafe extern "system" fn panel_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_SIZE => {
+            panel_layout(app, hwnd);
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => erase_theme_bg(app, hwnd, HDC(wparam.0 as _)),
+        WM_PAINT => {
+            paint_panel_header(app, hwnd);
+            LRESULT(0)
+        }
+        // Flat-style Detach / Recycle-all buttons (owner-drawn, secondary).
+        WM_DRAWITEM => {
+            draw_flat_button(
+                app,
+                lparam.0 as *const DRAWITEMSTRUCT,
+                false,
+                palette(app.is_dark).panel_bg,
+            );
+            LRESULT(1)
+        }
+        // Clicks on the view-switch toolbar buttons switch the side view.
+        WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            for (i, br) in panel_view_buttons().iter().enumerate() {
+                if x >= br.left && x < br.right && y >= br.top && y < br.bottom {
+                    let view = PANEL_VIEW_BUTTONS[i].0;
+                    if view != app.side_view {
+                        apply_side_view(app.main_hwnd, app, view);
+                    }
+                    break;
+                }
+            }
+            LRESULT(0)
+        }
+        // The header buttons and the side list are children of the panel, so
+        // their commands/notifications land here — route them to the shared
+        // handlers on the main window.
+        WM_COMMAND => {
+            on_command(app.main_hwnd, app, (wparam.0 & 0xFFFF) as u16);
+            LRESULT(0)
+        }
+        WM_NOTIFY => on_notify(app.main_hwnd, app, lparam),
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
