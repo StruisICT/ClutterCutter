@@ -2878,36 +2878,6 @@ unsafe fn on_tree_select(app: &mut AppState) {
     let _ = InvalidateRect(app.topbar, None, false);
 }
 
-// Selects a tree item without recording it as a new history entry.
-unsafe fn nav_select(app: &mut AppState, hti: isize) {
-    app.nav_lock = true;
-    SendMessageW(
-        app.tree,
-        TVM_SELECTITEM,
-        WPARAM(TVGN_CARET as usize),
-        LPARAM(hti),
-    );
-    app.nav_lock = false;
-    let _ = InvalidateRect(app.topbar, None, false);
-}
-
-unsafe fn nav_back(app: &mut AppState) {
-    if app.nav_pos > 0 {
-        app.nav_pos -= 1;
-        let hti = app.nav_hist[app.nav_pos as usize];
-        nav_select(app, hti);
-    }
-}
-
-unsafe fn nav_forward(app: &mut AppState) {
-    if app.nav_pos >= 0 && (app.nav_pos as usize) < app.nav_hist.len().saturating_sub(1) {
-        app.nav_pos += 1;
-        let hti = app.nav_hist[app.nav_pos as usize];
-        nav_select(app, hti);
-    }
-}
-
-// Jumps straight to the top-level view (the "All drives" root), recording a new
 // "Home": return to the top-level All-drives overview and reset the Back/Forward
 // history to a clean state (Home is a fresh start). If the current view is a
 // single-drive scan (no All-drives root), rescan every drive; otherwise collapse

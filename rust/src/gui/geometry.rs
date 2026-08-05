@@ -17,30 +17,23 @@ pub(crate) fn pill_rect(client: &RECT) -> RECT {
     }
 }
 
-/// The Home / Back / Forward navigation button rectangles on the left of the top bar.
-pub(crate) fn nav_button_rects(client: &RECT) -> [RECT; 3] {
-    let bw = 34;
-    let bh = 32;
-    let gap = 6;
-    let x0 = 14;
+/// The Home button rectangle on the left of the top bar.
+pub(crate) fn home_button_rect(client: &RECT) -> RECT {
+    let (bw, bh, x0) = (34, 32, 14);
     let ty = (client.bottom - bh) / 2;
-    let mk = |i: i32| {
-        let l = x0 + i * (bw + gap);
-        RECT {
-            left: l,
-            top: ty,
-            right: l + bw,
-            bottom: ty + bh,
-        }
-    };
-    [mk(0), mk(1), mk(2)]
+    RECT {
+        left: x0,
+        top: ty,
+        right: x0 + bw,
+        bottom: ty + bh,
+    }
 }
 
-/// The Delete-selected button, sitting just right of the three nav buttons with
-/// a little extra separation.
+/// The Delete-selected button, sitting just right of the Home button with a
+/// little extra separation.
 pub(crate) fn delete_button_rect(client: &RECT) -> RECT {
     let (bw, bh, gap, x0) = (34, 32, 6, 14);
-    let l = x0 + 3 * (bw + gap) + 16;
+    let l = x0 + (bw + gap) + 12;
     let ty = (client.bottom - bh) / 2;
     RECT {
         left: l,

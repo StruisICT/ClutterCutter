@@ -24,13 +24,13 @@ use crate::format::format_bytes;
 use crate::types::FolderNode;
 
 use super::gdi::{card_round, fill_rect, fill_round};
-use super::geometry::{delete_button_rect, nav_button_rects, pill_rect};
+use super::geometry::{delete_button_rect, home_button_rect, pill_rect};
 use super::palette::{palette, ThemeMode};
 use super::{
     apply_side_view, apply_theme, delete_selected, draw_flat_button, erase_theme_bg, layout,
-    nav_back, nav_forward, nav_up, on_command, on_notify, paint_panel_header, panel_layout,
-    panel_view_buttons, toggle_detach, tree_item_lparam, AppState, DRIVE_CARD_GAP, DRIVE_CARD_H,
-    ID_DRIVE_BASE, PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
+    nav_up, on_command, on_notify, paint_panel_header, panel_layout, panel_view_buttons,
+    toggle_detach, tree_item_lparam, AppState, DRIVE_CARD_GAP, DRIVE_CARD_H, ID_DRIVE_BASE,
+    PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
 };
 
 // Bottom status strip: window-bg fill, a top hairline, a dark message on the
@@ -371,27 +371,19 @@ pub(crate) unsafe extern "system" fn topbar_proc(
             // Navigation buttons (Home / Back / Forward) on the left. Each is a
             // rounded button with a Segoe MDL2 glyph; unavailable actions dim.
             SetBkMode(hdc, TRANSPARENT);
-            let btns = nav_button_rects(&rc);
-            let enabled = [
-                true, // Home is always available (returns to the All-drives overview)
-                app.nav_pos > 0,
-                app.nav_pos >= 0 && (app.nav_pos as usize) < app.nav_hist.len().saturating_sub(1),
-            ];
-            let glyphs = ["\u{E80F}", "\u{E72B}", "\u{E72A}"]; // Home (top level), Back, Forward
+            // Home button (returns to the All-drives overview).
             let old = SelectObject(hdc, HGDIOBJ(app.font_icon.0));
-            for (i, br) in btns.iter().enumerate() {
-                card_round(hdc, br, 6, p.card_bg, p.hairline, 1);
-                let col = if enabled[i] { p.text } else { p.subtext };
-                SetTextColor(hdc, COLORREF(col));
-                let mut g: Vec<u16> = glyphs[i].encode_utf16().collect();
-                let mut grc = *br;
-                DrawTextW(
-                    hdc,
-                    &mut g,
-                    &mut grc,
-                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-                );
-            }
+            let home = home_button_rect(&rc);
+            card_round(hdc, &home, 6, p.card_bg, p.hairline, 1);
+            SetTextColor(hdc, COLORREF(p.text));
+            let mut hg: Vec<u16> = "\u{E80F}".encode_utf16().collect();
+            let mut hrc = home;
+            DrawTextW(
+                hdc,
+                &mut hg,
+                &mut hrc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
 
             // Delete-selected button (trash glyph, red).
             let del = delete_button_rect(&rc);
@@ -492,13 +484,8 @@ pub(crate) unsafe extern "system" fn topbar_proc(
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
             let hit = |r: &RECT| x >= r.left && x < r.right && y >= r.top && y < r.bottom;
-            let btns = nav_button_rects(&rc);
-            if hit(&btns[0]) {
+            if hit(&home_button_rect(&rc)) {
                 nav_up(app);
-            } else if hit(&btns[1]) {
-                nav_back(app);
-            } else if hit(&btns[2]) {
-                nav_forward(app);
             } else if hit(&delete_button_rect(&rc)) {
                 delete_selected(app.main_hwnd, app);
             } else {
