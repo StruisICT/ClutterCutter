@@ -6,8 +6,8 @@
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, ScreenToClient,
-    SelectObject, SetBkMode, SetTextColor, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT,
-    DT_SINGLELINE, DT_VCENTER, HDC, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
+    SelectObject, SetBkMode, SetTextColor, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT,
+    DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HDC, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::UI::Controls::{TVGN_CARET, TVGN_PARENT, TVM_GETNEXTITEM, TVM_SELECTITEM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
@@ -19,9 +19,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::types::FolderNode;
 
-use super::palette::palette;
+use super::gdi::{card_round, fill_rect, fill_round};
+use super::geometry::{delete_button_rect, nav_button_rects, pill_rect};
+use super::palette::{palette, ThemeMode};
 use super::{
-    erase_theme_bg, layout, toggle_detach, tree_item_lparam, AppState, SIDEBAR_W, SPLIT_W,
+    apply_theme, delete_selected, erase_theme_bg, layout, nav_back, nav_forward, nav_parent_hti,
+    nav_up, toggle_detach, tree_item_lparam, AppState, SIDEBAR_W, SPLIT_W,
 };
 
 // Bottom status strip: window-bg fill, a top hairline, a dark message on the
@@ -321,6 +324,188 @@ pub(crate) unsafe extern "system" fn crumb_proc(
                     WPARAM(TVGN_CARET as usize),
                     LPARAM(hti),
                 );
+            }
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// The branded top bar: nav buttons (Home/Back/Forward), a red Delete-selected
+// button, and the sliding light/dark theme pill. Clicks route to nav_*,
+// delete_selected, or apply_theme.
+pub(crate) unsafe extern "system" fn topbar_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let p = palette(app.is_dark);
+
+            fill_rect(hdc, &rc, p.win_bg);
+            // Bottom hairline.
+            let hair = RECT {
+                top: rc.bottom - 1,
+                ..rc
+            };
+            fill_rect(hdc, &hair, p.hairline);
+
+            // Navigation buttons (Home / Back / Forward) on the left. Each is a
+            // rounded button with a Segoe MDL2 glyph; unavailable actions dim.
+            SetBkMode(hdc, TRANSPARENT);
+            let btns = nav_button_rects(&rc);
+            let enabled = [
+                nav_parent_hti(app) != 0,
+                app.nav_pos > 0,
+                app.nav_pos >= 0 && (app.nav_pos as usize) < app.nav_hist.len().saturating_sub(1),
+            ];
+            let glyphs = ["\u{E80F}", "\u{E72B}", "\u{E72A}"]; // Home (top level), Back, Forward
+            let old = SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+            for (i, br) in btns.iter().enumerate() {
+                card_round(hdc, br, 6, p.card_bg, p.hairline, 1);
+                let col = if enabled[i] { p.text } else { p.subtext };
+                SetTextColor(hdc, COLORREF(col));
+                let mut g: Vec<u16> = glyphs[i].encode_utf16().collect();
+                let mut grc = *br;
+                DrawTextW(
+                    hdc,
+                    &mut g,
+                    &mut grc,
+                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+                );
+            }
+
+            // Delete-selected button (trash glyph, red).
+            let del = delete_button_rect(&rc);
+            card_round(hdc, &del, 6, p.card_bg, p.hairline, 1);
+            SetTextColor(hdc, COLORREF(0x0040_40E0));
+            let mut dg: Vec<u16> = "\u{E74D}".encode_utf16().collect();
+            let mut drc = del;
+            DrawTextW(
+                hdc,
+                &mut dg,
+                &mut drc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
+
+            // Theme toggle: a bordered pill with a sliding knob. Both glyphs sit
+            // on the track; a rounded knob slides over the active side.
+            let pr = pill_rect(&rc);
+            let pill_r = (pr.bottom - pr.top) / 2;
+            card_round(hdc, &pr, pill_r, p.track, p.subtext, 1);
+            let mid = (pr.left + pr.right) / 2;
+            let light_active = !app.is_dark;
+            SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+            let mut sun: Vec<u16> = "\u{E706}".encode_utf16().collect(); // Brightness
+            let mut moon: Vec<u16> = "\u{E708}".encode_utf16().collect(); // QuietHours
+            let mut lrc = RECT {
+                left: pr.left,
+                right: mid,
+                ..pr
+            };
+            let mut rrc = RECT {
+                left: mid,
+                right: pr.right,
+                ..pr
+            };
+            SetTextColor(hdc, COLORREF(p.subtext));
+            DrawTextW(
+                hdc,
+                &mut sun,
+                &mut lrc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
+            DrawTextW(
+                hdc,
+                &mut moon,
+                &mut rrc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
+            let inset = 3;
+            let knob = RECT {
+                left: if light_active {
+                    pr.left + inset
+                } else {
+                    mid + inset / 2
+                },
+                right: if light_active {
+                    mid - inset / 2
+                } else {
+                    pr.right - inset
+                },
+                top: pr.top + inset,
+                bottom: pr.bottom - inset,
+            };
+            let knob_r = (knob.bottom - knob.top) / 2;
+            let (knob_col, on_knob) = if app.is_dark {
+                (0x00E4_E4E4u32, 0x0020_2020u32) // light knob, dark glyph
+            } else {
+                (0x001E_1E1Eu32, 0x00FF_FFFFu32) // dark knob, white glyph
+            };
+            fill_round(hdc, &knob, knob_r, knob_col);
+            SetTextColor(hdc, COLORREF(on_knob));
+            if light_active {
+                let mut s2: Vec<u16> = "\u{E706}".encode_utf16().collect();
+                let mut kr = knob;
+                DrawTextW(
+                    hdc,
+                    &mut s2,
+                    &mut kr,
+                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+                );
+            } else {
+                let mut m2: Vec<u16> = "\u{E708}".encode_utf16().collect();
+                let mut kr = knob;
+                DrawTextW(
+                    hdc,
+                    &mut m2,
+                    &mut kr,
+                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+                );
+            }
+
+            SelectObject(hdc, old);
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let hit = |r: &RECT| x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+            let btns = nav_button_rects(&rc);
+            if hit(&btns[0]) {
+                nav_up(app);
+            } else if hit(&btns[1]) {
+                nav_back(app);
+            } else if hit(&btns[2]) {
+                nav_forward(app);
+            } else if hit(&delete_button_rect(&rc)) {
+                delete_selected(app.main_hwnd, app);
+            } else {
+                let pr = pill_rect(&rc);
+                if hit(&pr) {
+                    let mid = (pr.left + pr.right) / 2;
+                    let mode = if x < mid {
+                        ThemeMode::Light
+                    } else {
+                        ThemeMode::Dark
+                    };
+                    apply_theme(app.main_hwnd, app, mode);
+                }
             }
             LRESULT(0)
         }
