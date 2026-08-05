@@ -9,22 +9,27 @@ use windows::Win32::Graphics::Gdi::{
     SelectObject, SetBkMode, SetTextColor, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT,
     DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HDC, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
-use windows::Win32::UI::Controls::{TVGN_CARET, TVGN_PARENT, TVM_GETNEXTITEM, TVM_SELECTITEM};
+use windows::Win32::UI::Controls::{
+    DRAWITEMSTRUCT, TVGN_CARET, TVGN_PARENT, TVM_GETNEXTITEM, TVM_SELECTITEM,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, GetClientRect, GetCursorPos, GetWindowLongPtrW, GetWindowTextW, LoadCursorW,
-    MoveWindow, SendMessageW, SetCursor, GWLP_USERDATA, IDC_SIZEWE, WM_CLOSE, WM_ERASEBKGND,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_SETCURSOR, WM_SIZE,
+    MoveWindow, SendMessageW, SetCursor, GWLP_USERDATA, IDC_SIZEWE, WM_CLOSE, WM_COMMAND,
+    WM_DRAWITEM, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_SETCURSOR,
+    WM_SIZE,
 };
 
+use crate::format::format_bytes;
 use crate::types::FolderNode;
 
 use super::gdi::{card_round, fill_rect, fill_round};
 use super::geometry::{delete_button_rect, nav_button_rects, pill_rect};
 use super::palette::{palette, ThemeMode};
 use super::{
-    apply_theme, delete_selected, erase_theme_bg, layout, nav_back, nav_forward, nav_parent_hti,
-    nav_up, toggle_detach, tree_item_lparam, AppState, SIDEBAR_W, SPLIT_W,
+    apply_theme, delete_selected, draw_flat_button, erase_theme_bg, layout, nav_back, nav_forward,
+    nav_parent_hti, nav_up, toggle_detach, tree_item_lparam, AppState, DRIVE_CARD_GAP,
+    DRIVE_CARD_H, ID_DRIVE_BASE, SIDEBAR_W, SPLIT_W,
 };
 
 // Bottom status strip: window-bg fill, a top hairline, a dark message on the
@@ -505,6 +510,194 @@ pub(crate) unsafe extern "system" fn topbar_proc(
                         ThemeMode::Dark
                     };
                     apply_theme(app.main_hwnd, app, mode);
+                }
+            }
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// The left DRIVES column: a "DRIVES" header, an owner-drawn usage-bar card per
+// drive (active card gets a blue border), and it hosts the reparented Scan-all
+// button (owner-drawn via draw_flat_button). A card click scans that drive.
+pub(crate) unsafe extern "system" fn sidebar_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        // The Scan-all button lives here now; bubble its click up to the main window.
+        WM_COMMAND => {
+            SendMessageW(app.main_hwnd, WM_COMMAND, wparam, lparam);
+            LRESULT(0)
+        }
+        // Flat-style Scan-all button (owner-drawn, accent primary).
+        WM_DRAWITEM => {
+            draw_flat_button(
+                app,
+                lparam.0 as *const DRAWITEMSTRUCT,
+                true,
+                palette(app.is_dark).win_bg,
+            );
+            LRESULT(1)
+        }
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let p = palette(app.is_dark);
+            let b = CreateSolidBrush(COLORREF(p.win_bg));
+            FillRect(hdc, &rc, b);
+            let _ = DeleteObject(b);
+
+            SetBkMode(hdc, TRANSPARENT);
+            SelectObject(hdc, HGDIOBJ(app.font_small.0));
+            // "DRIVES" section header, muted grey.
+            let mut hdr: Vec<u16> = "DRIVES".encode_utf16().collect();
+            let mut hrc = RECT {
+                left: 18,
+                top: 10,
+                right: rc.right - 12,
+                bottom: 30,
+            };
+            SetTextColor(hdc, COLORREF(p.subtext));
+            DrawTextW(
+                hdc,
+                &mut hdr,
+                &mut hrc,
+                DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+            );
+
+            let top0 = 36;
+            for (i, d) in app.drives.iter().enumerate() {
+                let cy = top0 + i as i32 * (DRIVE_CARD_H + DRIVE_CARD_GAP);
+                let card_rc = RECT {
+                    left: 12,
+                    top: cy,
+                    right: rc.right - 12,
+                    bottom: cy + DRIVE_CARD_H,
+                };
+                let is_active = app.active_drive == i as i32;
+                let (border, bw) = if is_active {
+                    (p.blue, 2)
+                } else {
+                    (p.hairline, 1)
+                };
+                card_round(hdc, &card_rc, 10, p.card_bg, border, bw);
+
+                // Drive glyph (Segoe MDL2 "Hard drive").
+                let gx = card_rc.left + 14;
+                SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+                let mut glyph: Vec<u16> = "\u{EDA2}".encode_utf16().collect();
+                let mut grc = RECT {
+                    left: gx,
+                    top: cy + 8,
+                    right: gx + 22,
+                    bottom: cy + 30,
+                };
+                SetTextColor(hdc, COLORREF(p.text));
+                DrawTextW(
+                    hdc,
+                    &mut glyph,
+                    &mut grc,
+                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+                );
+
+                let lx = gx + 30;
+                let name = if d.label.is_empty() {
+                    format!("{}:", d.letter)
+                } else {
+                    format!("{}: — {}", d.letter, d.label)
+                };
+                let mut nw: Vec<u16> = name.encode_utf16().collect();
+                SelectObject(hdc, HGDIOBJ(app.font_small.0));
+                let mut nrc = RECT {
+                    left: lx,
+                    top: cy + 8,
+                    right: card_rc.right - 12,
+                    bottom: cy + 28,
+                };
+                SetTextColor(hdc, COLORREF(p.text));
+                DrawTextW(
+                    hdc,
+                    &mut nw,
+                    &mut nrc,
+                    DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+                );
+
+                // Usage bar (rounded, blue fill on a light track).
+                let total = d.total_bytes.max(1);
+                let used = total.saturating_sub(d.free_bytes);
+                let frac = (used as f64 / total as f64).clamp(0.0, 1.0);
+                let bl = card_rc.left + 14;
+                let br_x = card_rc.right - 14;
+                let bar = RECT {
+                    left: bl,
+                    top: cy + 32,
+                    right: br_x,
+                    bottom: cy + 40,
+                };
+                fill_round(hdc, &bar, 4, p.track);
+                let fw = ((bar.right - bar.left) as f64 * frac).round() as i32;
+                if fw >= 4 {
+                    let fill = RECT {
+                        right: bar.left + fw,
+                        ..bar
+                    };
+                    fill_round(hdc, &fill, 4, p.blue);
+                }
+
+                // "216 GB / 238 GB · 91%".
+                let usage = format!(
+                    "{} / {}  ·  {:.0}%",
+                    format_bytes(used as i64),
+                    format_bytes(total as i64),
+                    frac * 100.0
+                );
+                let mut uw: Vec<u16> = usage.encode_utf16().collect();
+                let mut urc = RECT {
+                    left: bl,
+                    top: cy + 42,
+                    right: card_rc.right - 12,
+                    bottom: cy + 58,
+                };
+                SetTextColor(hdc, COLORREF(p.subtext));
+                DrawTextW(
+                    hdc,
+                    &mut uw,
+                    &mut urc,
+                    DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+                );
+            }
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            if app.scanning {
+                return LRESULT(0);
+            }
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let top0 = 32;
+            let stride = DRIVE_CARD_H + DRIVE_CARD_GAP;
+            if y >= top0 {
+                let i = (y - top0) / stride;
+                let within = (y - top0) % stride;
+                if within < DRIVE_CARD_H && (i as usize) < app.drives.len() {
+                    SendMessageW(
+                        app.main_hwnd,
+                        WM_COMMAND,
+                        WPARAM((ID_DRIVE_BASE + i as u16) as usize),
+                        LPARAM(0),
+                    );
                 }
             }
             LRESULT(0)
