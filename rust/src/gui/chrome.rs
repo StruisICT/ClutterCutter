@@ -23,14 +23,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::format::format_bytes;
 use crate::types::FolderNode;
 
+use super::darkmode::{apply_theme, erase_theme_bg};
 use super::gdi::{card_round, fill_rect, fill_round};
 use super::geometry::{delete_button_rect, home_button_rect, pill_rect};
 use super::palette::{palette, ThemeMode};
 use super::{
-    apply_side_view, apply_theme, delete_selected, draw_flat_button, erase_theme_bg, layout,
-    nav_up, on_command, on_notify, paint_panel_header, panel_layout, panel_view_buttons,
-    toggle_detach, tree_item_lparam, AppState, DRIVE_CARD_GAP, DRIVE_CARD_H, ID_DRIVE_BASE,
-    PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
+    apply_side_view, delete_selected, draw_flat_button, layout, nav_up, on_command, on_notify,
+    paint_panel_header, panel_layout, panel_view_buttons, toggle_detach, tree_item_lparam,
+    AppState, DRIVE_CARD_GAP, DRIVE_CARD_H, ID_DRIVE_BASE, PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
 };
 
 // Bottom status strip: window-bg fill, a top hairline, a dark message on the

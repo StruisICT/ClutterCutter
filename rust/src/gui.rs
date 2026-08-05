@@ -15,6 +15,7 @@
 
 mod about;
 mod chrome;
+mod darkmode;
 mod gdi;
 mod geometry;
 mod listview;
@@ -26,9 +27,14 @@ use crate::mft::{is_ntfs_drive_root, MftScanner};
 use crate::scanner::{wide, wstr_to_string, ProgressFn, Scanner};
 use crate::temp::{self, TempFileEntry};
 use crate::types::{FileEntry, FolderNode, ScanProgress};
+use darkmode::{
+    allow_dark_mode_for_window, apply_theme, erase_theme_bg, uah_draw_menu_bar_bg,
+    uah_draw_menu_bottom_line, uah_draw_menu_item, UahDrawMenuItem, UahMenu, WM_UAHDRAWMENU,
+    WM_UAHDRAWMENUITEM,
+};
 use gdi::{
-    card_round, draw_expand_box, draw_file_glyph, draw_folder_glyph, draw_text, fill_rect,
-    fill_round, make_font, make_font_face,
+    card_round, draw_expand_box, draw_file_glyph, draw_folder_glyph, draw_text, fill_round,
+    make_font, make_font_face,
 };
 use listview::{
     insert_column, insert_row_with_param, list_item_lparam, remove_side_rows, row_selected,
@@ -39,18 +45,17 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use windows::core::{w, PCSTR, PCWSTR, PWSTR};
+use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     BOOL, COLORREF, FILETIME, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
-    GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow, ReleaseDC,
-    SelectObject, SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT,
-    COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_LEFT, DT_RIGHT,
-    DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, RDW_ALLCHILDREN,
-    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
+    GetSysColorBrush, InvalidateRect, RedrawWindow, SelectObject, SetBkMode, SetTextColor,
+    UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER,
+    DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ,
+    PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -58,30 +63,25 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
 };
-use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
-use windows::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
-    REG_VALUE_TYPE,
-};
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
 use windows::Win32::UI::Controls::{
-    ImageList_Create, InitCommonControlsEx, SetWindowTheme, CDDS_ITEMPREPAINT, CDDS_PREPAINT,
-    CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW,
-    CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, HDF_SORTDOWN, HDF_SORTUP, HDITEMW, HDI_FORMAT,
-    HDM_GETITEMCOUNT, HDM_GETITEMW, HDM_SETITEMW, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
-    ICC_STANDARD_CLASSES, ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVIR_BOUNDS,
-    LVM_DELETEALLITEMS, LVM_DELETECOLUMN, LVM_GETHEADER, LVM_GETITEMRECT, LVM_GETTOPINDEX,
-    LVM_SCROLL, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST,
-    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_COLUMNCLICK, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER,
-    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR,
-    NMITEMACTIVATE, NMLISTVIEW, NMLVCUSTOMDRAW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK,
-    ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN,
-    TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND,
-    TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETBKCOLOR, TVM_SETITEMW,
-    TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
+    ImageList_Create, InitCommonControlsEx, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM,
+    CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT,
+    DRAWITEMSTRUCT, HDF_SORTDOWN, HDF_SORTUP, HDITEMW, HDI_FORMAT, HDM_GETITEMCOUNT, HDM_GETITEMW,
+    HDM_SETITEMW, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES,
+    ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVIR_BOUNDS, LVM_DELETEALLITEMS,
+    LVM_DELETECOLUMN, LVM_GETHEADER, LVM_GETITEMRECT, LVM_GETTOPINDEX, LVM_SCROLL,
+    LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVN_COLUMNCLICK,
+    LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT,
+    LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE, NMLISTVIEW, NMLVCUSTOMDRAW, NM_CLICK,
+    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET,
+    TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
+    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
+    TVM_SETITEMW, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
     TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus};
@@ -92,21 +92,18 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
     CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, DrawMenuBar, GetClientRect,
-    GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
-    GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, KillTimer,
-    LoadCursorW, LoadIconW, MessageBoxW, MoveWindow, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SendMessageW, SetForegroundWindow, SetMenu, SetParent, SetTimer,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu,
+    GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
+    IsDialogMessageW, IsZoomed, KillTimer, LoadCursorW, LoadIconW, MessageBoxW, MoveWindow,
+    PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow, SetMenu,
+    SetParent, SetTimer, SetWindowLongPtrW, SetWindowTextW, ShowWindow, TrackPopupMenu,
     TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW,
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW,
-    IDC_SIZEWE, IDI_APPLICATION, IDYES, MB_ICONWARNING, MB_YESNO, MENUBARINFO, MENUITEMINFOW,
-    MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
-    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND,
-    WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE,
-    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW,
-    WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP,
-    WS_VISIBLE,
+    IDC_SIZEWE, IDI_APPLICATION, IDYES, MB_ICONWARNING, MB_YESNO, MF_BYCOMMAND, MF_POPUP,
+    MF_SEPARATOR, MF_STRING, MSG, SM_CXVSCROLL, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY,
+    WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT,
+    WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CHILD,
+    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -821,16 +818,6 @@ unsafe extern "system" fn wnd_proc(
 
 // The window-class background brush is fixed at registration, so dark mode
 // fills the client area here instead.
-unsafe fn erase_theme_bg(app: &AppState, hwnd: HWND, hdc: HDC) -> LRESULT {
-    let mut rc = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc);
-    if app.is_dark {
-        fill_rect(hdc, &rc, 0x0020_2020);
-    } else {
-        FillRect(hdc, &rc, GetSysColorBrush(COLOR_BTNFACE));
-    }
-    LRESULT(1)
-}
 
 unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
     match id {
@@ -1556,21 +1543,6 @@ unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
 
 // The theme palette (`Pal` + `palette` + `ThemeMode`) lives in `gui::palette`.
 // The GDI drawing helpers live in `gui::gdi`.
-
-// Filled rounded rectangle in `color` (no visible border).
-// (Re)create the cached list fill brushes for the current theme. Called at
-// startup and whenever the theme flips; the old brushes are freed first.
-unsafe fn rebuild_theme_brushes(app: &mut AppState) {
-    let p = palette(app.is_dark);
-    if !app.brush_card.is_invalid() {
-        let _ = DeleteObject(app.brush_card);
-    }
-    if !app.brush_panel.is_invalid() {
-        let _ = DeleteObject(app.brush_panel);
-    }
-    app.brush_card = CreateSolidBrush(COLORREF(p.card_bg));
-    app.brush_panel = CreateSolidBrush(COLORREF(p.panel_bg));
-}
 
 // Owner-draws a flat, rounded push button matching the redesign. `primary` fills
 // it with the accent blue (the Scan-all call-to-action); otherwise it is a
@@ -4143,405 +4115,7 @@ unsafe fn show_context_menu_at(hwnd: HWND, pt: POINT) {
     let _ = DestroyMenu(menu);
 }
 
-// ---- Theme ----
-
-fn read_system_uses_light_theme() -> bool {
-    unsafe {
-        let mut hkey = HKEY::default();
-        if RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
-            0,
-            KEY_READ,
-            &mut hkey,
-        )
-        .is_err()
-        {
-            return true; // default to light if registry read fails
-        }
-        let mut value: u32 = 1;
-        let mut size: u32 = std::mem::size_of::<u32>() as u32;
-        let mut vtype = REG_VALUE_TYPE(0);
-        let _ = RegQueryValueExW(
-            hkey,
-            w!("SystemUsesLightTheme"),
-            None,
-            Some(&mut vtype),
-            Some(&mut value as *mut u32 as *mut u8),
-            Some(&mut size),
-        );
-        let _ = RegCloseKey(hkey);
-        if vtype == REG_DWORD {
-            value != 0
-        } else {
-            true
-        }
-    }
-}
-
-unsafe fn apply_theme(hwnd: HWND, app: &mut AppState, mode: ThemeMode) {
-    let is_dark = match mode {
-        ThemeMode::Light => false,
-        ThemeMode::Dark => true,
-        ThemeMode::Auto => !read_system_uses_light_theme(),
-    };
-
-    // Title bar (Windows 10 2004+ and Windows 11)
-    let use_dark = BOOL(if is_dark { 1 } else { 0 });
-    let _ = DwmSetWindowAttribute(
-        hwnd,
-        DWMWA_USE_IMMERSIVE_DARK_MODE,
-        &use_dark as *const _ as *const _,
-        std::mem::size_of::<BOOL>() as u32,
-    );
-
-    // ListView + TreeView themes
-    let theme_w: Vec<u16> = if is_dark {
-        "DarkMode_Explorer\0".encode_utf16().collect()
-    } else {
-        "Explorer\0".encode_utf16().collect()
-    };
-    // Process-wide dark mode (undocumented uxtheme, guarded): without this,
-    // DarkMode_* window themes don't actually render dark and popup menus
-    // stay white. Must run before the SetWindowTheme calls below, and every
-    // themed control additionally needs the per-window allow call.
-    set_preferred_app_mode(is_dark);
-    for w in [hwnd, app.float_win, app.panel, app.status] {
-        if !w.is_invalid() {
-            allow_dark_mode_for_window(w, is_dark);
-        }
-    }
-
-    allow_dark_mode_for_window(app.list, is_dark);
-    allow_dark_mode_for_window(app.tree, is_dark);
-    allow_dark_mode_for_window(app.side_list, is_dark);
-    let _ = SetWindowTheme(app.list, PCWSTR(theme_w.as_ptr()), PCWSTR::null());
-    let _ = SetWindowTheme(app.tree, PCWSTR(theme_w.as_ptr()), PCWSTR::null());
-    let _ = SetWindowTheme(app.side_list, PCWSTR(theme_w.as_ptr()), PCWSTR::null());
-    // Listview column headers have their own theme part ("ItemsView", which
-    // follows the allow-dark state); without both they stay white in dark mode.
-    let header_theme_w: Vec<u16> = "ItemsView\0".encode_utf16().collect();
-    for list in [app.list, app.side_list] {
-        let header = SendMessageW(list, LVM_GETHEADER, WPARAM(0), LPARAM(0));
-        if header.0 != 0 {
-            let header = HWND(header.0 as _);
-            allow_dark_mode_for_window(header, is_dark);
-            let _ = SetWindowTheme(header, PCWSTR(header_theme_w.as_ptr()), PCWSTR::null());
-        }
-    }
-    // Dark push buttons (Win10 1809+); "Explorer" restores the standard look.
-    let buttons: Vec<HWND> = app
-        .drive_buttons
-        .iter()
-        .copied()
-        .chain([
-            app.stop_btn,
-            app.scan_all_btn,
-            app.btn_detach,
-            app.btn_recycle_all,
-        ])
-        .collect();
-    for b in buttons {
-        allow_dark_mode_for_window(b, is_dark);
-        let _ = SetWindowTheme(b, PCWSTR(theme_w.as_ptr()), PCWSTR::null());
-    }
-    if !app.float_win.is_invalid() {
-        let _ = DwmSetWindowAttribute(
-            app.float_win,
-            DWMWA_USE_IMMERSIVE_DARK_MODE,
-            &use_dark as *const _ as *const _,
-            std::mem::size_of::<BOOL>() as u32,
-        );
-    }
-
-    let (bg, fg): (u32, u32) = if is_dark {
-        // COLORREF is 0x00BBGGRR
-        (0x00202020, 0x00E0E0E0)
-    } else {
-        (0x00FFFFFF, 0x00000000)
-    };
-    SendMessageW(app.list, LVM_SETBKCOLOR, WPARAM(0), LPARAM(bg as isize));
-    SendMessageW(app.list, LVM_SETTEXTCOLOR, WPARAM(0), LPARAM(fg as isize));
-    SendMessageW(app.list, LVM_SETTEXTBKCOLOR, WPARAM(0), LPARAM(bg as isize));
-    // The side list is a card list on the panel background.
-    let side_bg = palette(is_dark).panel_bg as isize;
-    SendMessageW(app.side_list, LVM_SETBKCOLOR, WPARAM(0), LPARAM(side_bg));
-    SendMessageW(
-        app.side_list,
-        LVM_SETTEXTCOLOR,
-        WPARAM(0),
-        LPARAM(fg as isize),
-    );
-    SendMessageW(
-        app.side_list,
-        LVM_SETTEXTBKCOLOR,
-        WPARAM(0),
-        LPARAM(side_bg),
-    );
-    SendMessageW(app.tree, TVM_SETBKCOLOR, WPARAM(0), LPARAM(bg as isize));
-    SendMessageW(app.tree, TVM_SETTEXTCOLOR, WPARAM(0), LPARAM(fg as isize));
-
-    if !app.menu.is_invalid() {
-        let id = match mode {
-            ThemeMode::Auto => ID_MENU_THEME_AUTO,
-            ThemeMode::Light => ID_MENU_THEME_LIGHT,
-            ThemeMode::Dark => ID_MENU_THEME_DARK,
-        } as u32;
-        let _ = CheckMenuRadioItem(
-            app.menu,
-            ID_MENU_THEME_AUTO as u32,
-            ID_MENU_THEME_DARK as u32,
-            id,
-            MF_BYCOMMAND.0,
-        );
-    }
-
-    app.theme_mode = mode;
-    app.is_dark = is_dark;
-    rebuild_theme_brushes(app); // refresh cached list fill brushes for the new theme
-                                // Force a full frame + children repaint: the title/menu bar live in the
-                                // non-client area and don't pick up theme changes from a client-area
-                                // invalidate alone. The caption needs the extra nudge below.
-    nudge_caption_repaint(hwnd);
-    let _ = DrawMenuBar(hwnd);
-    let _ = RedrawWindow(
-        hwnd,
-        None,
-        None,
-        RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
-    );
-    if !app.float_win.is_invalid() {
-        nudge_caption_repaint(app.float_win);
-        let _ = RedrawWindow(
-            app.float_win,
-            None,
-            None,
-            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
-        );
-    }
-    let _ = InvalidateRect(app.panel, None, true);
-    let _ = InvalidateRect(app.status, None, true);
-    let _ = InvalidateRect(app.topbar, None, false);
-    let _ = InvalidateRect(app.sidebar, None, false);
-    let _ = InvalidateRect(app.crumb, None, false);
-}
-
-// DWM caches the title bar, so flipping DWMWA_USE_IMMERSIVE_DARK_MODE with only
-// an SWP_FRAMECHANGED doesn't reliably recomposite the caption (it intermittently
-// keeps the old theme). A 1px size wobble forces DWM to repaint it. Skipped when
-// maximized, where a resize would un-maximize the window.
-unsafe fn nudge_caption_repaint(hwnd: HWND) {
-    let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED;
-    if IsZoomed(hwnd).as_bool() {
-        let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, 0, 0, flags | SWP_NOSIZE);
-        return;
-    }
-    let mut wr = RECT::default();
-    if GetWindowRect(hwnd, &mut wr).is_err() {
-        return;
-    }
-    let (w, h) = (wr.right - wr.left, wr.bottom - wr.top);
-    let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, w, h + 1, flags);
-    let _ = SetWindowPos(hwnd, HWND::default(), 0, 0, w, h, flags);
-}
-
-// ---- Undocumented dark-mode plumbing ----
-//
-// Windows exposes no public API to render Win32 common controls dark; the
-// DarkMode_* window themes only take effect after the app opts in through
-// unexported uxtheme entry points (looked up by ordinal — the technique
-// Notepad++, Windows Terminal-era tools, etc. use). Everything here degrades
-// to a silent no-op if an ordinal is missing, leaving light-on-dark controls
-// that still pass WCAG contrast.
-//
-//   ordinal 104: RefreshImmersiveColorPolicyState()
-//   ordinal 133: AllowDarkModeForWindow(hwnd, allow) — required per control
-//                before DarkMode_*/ItemsView themes actually render dark
-//   ordinal 135: SetPreferredAppMode(mode) — 1903+; 0=Default 1=AllowDark
-//                2=ForceDark 3=ForceLight
-//   ordinal 136: FlushMenuThemes() — re-themes popup menus
-
-unsafe fn uxtheme_ordinal(ordinal: u16) -> Option<unsafe extern "system" fn() -> isize> {
-    let lib = LoadLibraryW(w!("uxtheme.dll")).ok()?;
-    GetProcAddress(lib, PCSTR(ordinal as usize as *const u8))
-}
-
-unsafe fn allow_dark_mode_for_window(hwnd: HWND, allow: bool) {
-    if let Some(f) = uxtheme_ordinal(133) {
-        let allow_fn: unsafe extern "system" fn(HWND, BOOL) -> BOOL = std::mem::transmute(f);
-        let _ = allow_fn(hwnd, BOOL(allow as i32));
-    }
-}
-
-// ---- Dark menu bar (WM_UAH* owner-draw) ----
-//
-// FlushMenuThemes darkens popup menus but never the menu *bar*. The bar can
-// be painted via the undocumented WM_UAHDRAWMENU / WM_UAHDRAWMENUITEM
-// messages Windows sends when a window is UAH-subclassed — which it is by
-// default for any themed top-level window. This is the same technique
-// Notepad++ uses. When the theme is light we pass everything to
-// DefWindowProc, giving the stock menu bar.
-
-const WM_UAHDRAWMENU: u32 = 0x0091;
-const WM_UAHDRAWMENUITEM: u32 = 0x0092;
-
-// Raw ODS_* bits (DRAWITEMSTRUCT.itemState).
-const ODS_RAW_SELECTED: u32 = 0x0001;
-const ODS_RAW_GRAYED: u32 = 0x0002;
-const ODS_RAW_HOTLIGHT: u32 = 0x0040;
-const ODS_RAW_NOACCEL: u32 = 0x0100;
-
-const MENUBAR_DARK_BG: u32 = 0x0020_2020;
-const MENUBAR_DARK_HOT: u32 = 0x003E_3E3E;
-const MENUBAR_DARK_FG: u32 = 0x00E0_E0E0;
-const MENUBAR_DARK_GRAY: u32 = 0x0080_8080;
-
-#[repr(C)]
-struct UahMenu {
-    hmenu: HMENU,
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    dw_flags: u32,
-}
-
-#[repr(C)]
-struct UahMenuItemMetrics {
-    // Union of bar/popup size pairs; 4 (cx, cy) pairs cover both variants.
-    rgsize: [[u32; 2]; 4],
-}
-
-#[repr(C)]
-struct UahMenuPopupMetrics {
-    rgcx: [u32; 4],
-    bitfield: u32, // fUpdateMaxWidths : 2
-}
-
-#[repr(C)]
-struct UahMenuItem {
-    i_position: i32,
-    umim: UahMenuItemMetrics,
-    umpm: UahMenuPopupMetrics,
-}
-
-#[repr(C)]
-struct UahDrawMenuItem {
-    dis: windows::Win32::UI::Controls::DRAWITEMSTRUCT,
-    um: UahMenu,
-    umi: UahMenuItem,
-}
-
-// Menu bar background (the strip behind the items).
-unsafe fn uah_draw_menu_bar_bg(hwnd: HWND, udm: &UahMenu) {
-    let mut mbi = MENUBARINFO {
-        cbSize: std::mem::size_of::<MENUBARINFO>() as u32,
-        ..Default::default()
-    };
-    if GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mut mbi).is_err() {
-        return;
-    }
-    let mut rc_win = RECT::default();
-    let _ = GetWindowRect(hwnd, &mut rc_win);
-    // rcBar is in screen coords; the UAH DC is a window DC.
-    let rc = RECT {
-        left: mbi.rcBar.left - rc_win.left,
-        top: mbi.rcBar.top - rc_win.top,
-        right: mbi.rcBar.right - rc_win.left,
-        bottom: mbi.rcBar.bottom - rc_win.top,
-    };
-    let brush = CreateSolidBrush(COLORREF(MENUBAR_DARK_BG));
-    FillRect(udm.hdc, &rc, brush);
-    let _ = DeleteObject(brush);
-}
-
-unsafe fn uah_draw_menu_item(pudmi: &UahDrawMenuItem) {
-    // Item caption.
-    let mut buf = [0u16; 256];
-    let mut mii = MENUITEMINFOW {
-        cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
-        fMask: MIIM_STRING,
-        dwTypeData: PWSTR(buf.as_mut_ptr()),
-        cch: (buf.len() - 1) as u32,
-        ..Default::default()
-    };
-    let _ = GetMenuItemInfoW(pudmi.um.hmenu, pudmi.umi.i_position as u32, true, &mut mii);
-    let len = mii.cch as usize;
-
-    let state = pudmi.dis.itemState.0;
-    let bg = if state & (ODS_RAW_HOTLIGHT | ODS_RAW_SELECTED) != 0 {
-        MENUBAR_DARK_HOT
-    } else {
-        MENUBAR_DARK_BG
-    };
-    let fg = if state & ODS_RAW_GRAYED != 0 {
-        MENUBAR_DARK_GRAY
-    } else {
-        MENUBAR_DARK_FG
-    };
-    let brush = CreateSolidBrush(COLORREF(bg));
-    FillRect(pudmi.dis.hDC, &pudmi.dis.rcItem, brush);
-    let _ = DeleteObject(brush);
-    if len == 0 {
-        return;
-    }
-    SetBkMode(pudmi.dis.hDC, TRANSPARENT);
-    SetTextColor(pudmi.dis.hDC, COLORREF(fg));
-    let mut fmt = DT_CENTER | DT_SINGLELINE | DT_VCENTER;
-    if state & ODS_RAW_NOACCEL != 0 {
-        fmt |= DT_HIDEPREFIX;
-    }
-    let mut rc = pudmi.dis.rcItem;
-    DrawTextW(pudmi.dis.hDC, &mut buf[..len], &mut rc, fmt);
-}
-
-// Windows draws a 1px light line between the menu bar and the client area
-// during non-client painting; overpaint it to match the dark bar.
-unsafe fn uah_draw_menu_bottom_line(hwnd: HWND) {
-    let mut mbi = MENUBARINFO {
-        cbSize: std::mem::size_of::<MENUBARINFO>() as u32,
-        ..Default::default()
-    };
-    if GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mut mbi).is_err() {
-        return;
-    }
-    let mut rc_client = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc_client);
-    let mut pts = [
-        POINT {
-            x: rc_client.left,
-            y: rc_client.top,
-        },
-        POINT {
-            x: rc_client.right,
-            y: rc_client.bottom,
-        },
-    ];
-    MapWindowPoints(hwnd, HWND::default(), &mut pts);
-    let mut rc_win = RECT::default();
-    let _ = GetWindowRect(hwnd, &mut rc_win);
-    let line = RECT {
-        left: pts[0].x - rc_win.left,
-        top: pts[0].y - rc_win.top - 1,
-        right: pts[1].x - rc_win.left,
-        bottom: pts[0].y - rc_win.top,
-    };
-    let hdc = GetWindowDC(hwnd);
-    let brush = CreateSolidBrush(COLORREF(MENUBAR_DARK_BG));
-    FillRect(hdc, &line, brush);
-    let _ = DeleteObject(brush);
-    let _ = ReleaseDC(hwnd, hdc);
-}
-
-unsafe fn set_preferred_app_mode(dark: bool) {
-    if let Some(f) = uxtheme_ordinal(135) {
-        let set_mode: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);
-        set_mode(if dark { 2 } else { 3 }); // ForceDark / ForceLight
-    }
-    if let Some(f) = uxtheme_ordinal(104) {
-        f(); // RefreshImmersiveColorPolicyState
-    }
-    if let Some(f) = uxtheme_ordinal(136) {
-        f(); // FlushMenuThemes
-    }
-}
+// Theming (apply_theme, uxtheme opt-in, dark menu bar) lives in `gui::darkmode`.
 
 // ---- About dialog + admin relaunch ----
 
