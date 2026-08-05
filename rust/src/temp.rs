@@ -168,3 +168,72 @@ fn collect(node: &FolderNode, src: TempSource, out: &mut Vec<TempFileEntry>) {
         collect(c, src, out);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::FileEntry;
+
+    fn fe(name: &str, size: i64) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            size,
+            last_modified_ft: 0,
+        }
+    }
+
+    #[test]
+    fn source_labels_are_stable() {
+        assert_eq!(TempSource::UserTemp.label(), "User Temp");
+        assert_eq!(TempSource::WindowsOld.label(), "Windows.old");
+        assert_eq!(TempSource::FirefoxCache.label(), "Firefox cache");
+    }
+
+    #[test]
+    fn collect_flattens_tree_with_full_paths() {
+        let child = FolderNode {
+            full_path: r"C:\Temp\sub".into(),
+            files: vec![fe("deep.dat", 20)],
+            ..Default::default()
+        };
+        let root = FolderNode {
+            full_path: r"C:\Temp".into(),
+            files: vec![fe("a.tmp", 10)],
+            children: vec![child],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        collect(&root, TempSource::UserTemp, &mut out);
+        let paths: Vec<&str> = out.iter().map(|e| e.full_path.as_str()).collect();
+        assert!(paths.contains(&r"C:\Temp\a.tmp"));
+        assert!(paths.contains(&r"C:\Temp\sub\deep.dat"));
+        assert!(out.iter().all(|e| e.source == TempSource::UserTemp));
+    }
+
+    #[test]
+    fn collect_handles_root_with_trailing_separator() {
+        let root = FolderNode {
+            full_path: r"C:\".into(),
+            files: vec![fe("x.tmp", 1)],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        collect(&root, TempSource::WindowsTemp, &mut out);
+        assert_eq!(out[0].full_path, r"C:\x.tmp");
+    }
+
+    #[test]
+    fn discover_locations_returns_only_existing_deduped_dirs() {
+        // Environment-dependent, but on any Windows box %TEMP% exists; assert the
+        // invariants hold rather than exact contents.
+        let locs = discover_locations();
+        let mut lower: Vec<String> = locs.iter().map(|(_, p)| p.to_ascii_lowercase()).collect();
+        let before = lower.len();
+        lower.sort();
+        lower.dedup();
+        assert_eq!(before, lower.len(), "paths must be deduped");
+        for (_, p) in &locs {
+            assert!(std::path::Path::new(p).is_dir(), "{p} should exist");
+        }
+    }
+}
