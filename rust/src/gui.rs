@@ -1994,145 +1994,7 @@ unsafe extern "system" fn sidebar_proc(
     }
 }
 
-// Breadcrumb path bar above the table. Segments come from the hidden tree's
-// parent chain of the current selection; clicking one re-selects that node.
-unsafe extern "system" fn crumb_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
-    if app_ptr.is_null() {
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
-    }
-    let app = &mut *app_ptr;
-    match msg {
-        WM_ERASEBKGND => LRESULT(1),
-        WM_PAINT => {
-            let mut ps = PAINTSTRUCT::default();
-            let hdc = BeginPaint(hwnd, &mut ps);
-            let mut rc = RECT::default();
-            let _ = GetClientRect(hwnd, &mut rc);
-            let p = palette(app.is_dark);
-            let (bg, fg) = (p.card_bg, p.text);
-            let b = CreateSolidBrush(COLORREF(bg));
-            FillRect(hdc, &rc, b);
-            let _ = DeleteObject(b);
-
-            app.crumb_segs.clear();
-            // Walk the hidden tree from the current caret up to the root.
-            let caret = SendMessageW(
-                app.tree,
-                TVM_GETNEXTITEM,
-                WPARAM(TVGN_CARET as usize),
-                LPARAM(0),
-            )
-            .0 as isize;
-            let mut chain: Vec<(String, isize)> = Vec::new();
-            let mut hti = caret;
-            while hti != 0 {
-                let lp = tree_item_lparam(app.tree, hti);
-                if lp != 0 {
-                    let n = &*(lp as *const FolderNode);
-                    chain.push((n.name.clone(), hti));
-                }
-                hti = SendMessageW(
-                    app.tree,
-                    TVM_GETNEXTITEM,
-                    WPARAM(TVGN_PARENT as usize),
-                    LPARAM(hti),
-                )
-                .0 as isize;
-            }
-            chain.reverse();
-
-            SetBkMode(hdc, TRANSPARENT);
-            SelectObject(hdc, HGDIOBJ(app.font_small.0));
-            let brand = p.blue;
-            let mut x = 14;
-            for (i, (name, hti)) in chain.iter().enumerate() {
-                if i > 0 {
-                    let mut sep: Vec<u16> = "  \u{203A}  ".encode_utf16().collect();
-                    let mut calc = RECT::default();
-                    DrawTextW(hdc, &mut sep, &mut calc, DT_CALCRECT | DT_SINGLELINE);
-                    let sw = calc.right - calc.left;
-                    let mut src = RECT {
-                        left: x,
-                        top: 0,
-                        right: x + sw,
-                        bottom: rc.bottom,
-                    };
-                    SetTextColor(hdc, COLORREF(0x0090_9090));
-                    DrawTextW(
-                        hdc,
-                        &mut sep,
-                        &mut src,
-                        DT_SINGLELINE | DT_VCENTER | DT_LEFT,
-                    );
-                    x += sw;
-                }
-                let last = i == chain.len() - 1;
-                let mut seg: Vec<u16> = name.encode_utf16().collect();
-                let mut calc = RECT::default();
-                DrawTextW(hdc, &mut seg, &mut calc, DT_CALCRECT | DT_SINGLELINE);
-                let segw = (calc.right - calc.left).max(8);
-                let mut drc = RECT {
-                    left: x,
-                    top: 0,
-                    right: x + segw,
-                    bottom: rc.bottom,
-                };
-                SetTextColor(hdc, COLORREF(if last { fg } else { brand }));
-                DrawTextW(
-                    hdc,
-                    &mut seg,
-                    &mut drc,
-                    DT_SINGLELINE | DT_VCENTER | DT_LEFT,
-                );
-                app.crumb_segs.push((x, x + segw, *hti));
-                x += segw;
-            }
-            // Right-aligned muted hint, matching the mockup.
-            let mut hint: Vec<u16> = "Folders (sorted by size)  ·  double-click to drill in"
-                .encode_utf16()
-                .collect();
-            let mut hrc = RECT {
-                left: x + 20,
-                top: 0,
-                right: rc.right - 14,
-                bottom: rc.bottom,
-            };
-            SetTextColor(hdc, COLORREF(p.subtext));
-            DrawTextW(
-                hdc,
-                &mut hint,
-                &mut hrc,
-                DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS,
-            );
-            let _ = EndPaint(hwnd, &ps);
-            LRESULT(0)
-        }
-        WM_LBUTTONDOWN => {
-            let x = (lparam.0 & 0xFFFF) as i16 as i32;
-            let target = app
-                .crumb_segs
-                .iter()
-                .find(|(l, r, _)| x >= *l && x < *r)
-                .map(|(_, _, hti)| *hti);
-            if let Some(hti) = target {
-                SendMessageW(
-                    app.tree,
-                    TVM_SELECTITEM,
-                    WPARAM(TVGN_CARET as usize),
-                    LPARAM(hti),
-                );
-            }
-            LRESULT(0)
-        }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-    }
-}
+// The breadcrumb WNDPROC lives in `gui::chrome`.
 
 unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     let hinstance = GetModuleHandleW(None).expect("GetModuleHandle");
@@ -2345,7 +2207,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     RegisterClassExW(&WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
-        lpfnWndProc: Some(crumb_proc),
+        lpfnWndProc: Some(chrome::crumb_proc),
         hInstance: hinstance.into(),
         hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
         hbrBackground: HBRUSH::default(),

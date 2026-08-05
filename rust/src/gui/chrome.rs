@@ -6,18 +6,23 @@
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, ScreenToClient,
-    SelectObject, SetBkMode, SetTextColor, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE,
-    DT_VCENTER, HDC, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
+    SelectObject, SetBkMode, SetTextColor, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT,
+    DT_SINGLELINE, DT_VCENTER, HDC, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
+use windows::Win32::UI::Controls::{TVGN_CARET, TVGN_PARENT, TVM_GETNEXTITEM, TVM_SELECTITEM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, GetClientRect, GetCursorPos, GetWindowLongPtrW, GetWindowTextW, LoadCursorW,
-    MoveWindow, SetCursor, GWLP_USERDATA, IDC_SIZEWE, WM_CLOSE, WM_ERASEBKGND, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_SETCURSOR, WM_SIZE,
+    MoveWindow, SendMessageW, SetCursor, GWLP_USERDATA, IDC_SIZEWE, WM_CLOSE, WM_ERASEBKGND,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_SETCURSOR, WM_SIZE,
 };
 
+use crate::types::FolderNode;
+
 use super::palette::palette;
-use super::{erase_theme_bg, layout, toggle_detach, AppState, SIDEBAR_W, SPLIT_W};
+use super::{
+    erase_theme_bg, layout, toggle_detach, tree_item_lparam, AppState, SIDEBAR_W, SPLIT_W,
+};
 
 // Bottom status strip: window-bg fill, a top hairline, a dark message on the
 // left and muted stats on the right (the two halves are split on a tab).
@@ -176,6 +181,147 @@ pub(crate) unsafe extern "system" fn float_proc(
         WM_CLOSE => {
             // Closing the frame re-attaches the panel instead of destroying it.
             toggle_detach(app.main_hwnd, app);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// The breadcrumb bar. Paints the path from the hidden tree's caret up to the
+// root (clickable segments), plus a right-aligned hint; a click selects the
+// corresponding tree item.
+pub(crate) unsafe extern "system" fn crumb_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let p = palette(app.is_dark);
+            let (bg, fg) = (p.card_bg, p.text);
+            let b = CreateSolidBrush(COLORREF(bg));
+            FillRect(hdc, &rc, b);
+            let _ = DeleteObject(b);
+
+            app.crumb_segs.clear();
+            // Walk the hidden tree from the current caret up to the root.
+            let caret = SendMessageW(
+                app.tree,
+                TVM_GETNEXTITEM,
+                WPARAM(TVGN_CARET as usize),
+                LPARAM(0),
+            )
+            .0 as isize;
+            let mut chain: Vec<(String, isize)> = Vec::new();
+            let mut hti = caret;
+            while hti != 0 {
+                let lp = tree_item_lparam(app.tree, hti);
+                if lp != 0 {
+                    let n = &*(lp as *const FolderNode);
+                    chain.push((n.name.clone(), hti));
+                }
+                hti = SendMessageW(
+                    app.tree,
+                    TVM_GETNEXTITEM,
+                    WPARAM(TVGN_PARENT as usize),
+                    LPARAM(hti),
+                )
+                .0 as isize;
+            }
+            chain.reverse();
+
+            SetBkMode(hdc, TRANSPARENT);
+            SelectObject(hdc, HGDIOBJ(app.font_small.0));
+            let brand = p.blue;
+            let mut x = 14;
+            for (i, (name, hti)) in chain.iter().enumerate() {
+                if i > 0 {
+                    let mut sep: Vec<u16> = "  \u{203A}  ".encode_utf16().collect();
+                    let mut calc = RECT::default();
+                    DrawTextW(hdc, &mut sep, &mut calc, DT_CALCRECT | DT_SINGLELINE);
+                    let sw = calc.right - calc.left;
+                    let mut src = RECT {
+                        left: x,
+                        top: 0,
+                        right: x + sw,
+                        bottom: rc.bottom,
+                    };
+                    SetTextColor(hdc, COLORREF(0x0090_9090));
+                    DrawTextW(
+                        hdc,
+                        &mut sep,
+                        &mut src,
+                        DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+                    );
+                    x += sw;
+                }
+                let last = i == chain.len() - 1;
+                let mut seg: Vec<u16> = name.encode_utf16().collect();
+                let mut calc = RECT::default();
+                DrawTextW(hdc, &mut seg, &mut calc, DT_CALCRECT | DT_SINGLELINE);
+                let segw = (calc.right - calc.left).max(8);
+                let mut drc = RECT {
+                    left: x,
+                    top: 0,
+                    right: x + segw,
+                    bottom: rc.bottom,
+                };
+                SetTextColor(hdc, COLORREF(if last { fg } else { brand }));
+                DrawTextW(
+                    hdc,
+                    &mut seg,
+                    &mut drc,
+                    DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+                );
+                app.crumb_segs.push((x, x + segw, *hti));
+                x += segw;
+            }
+            // Right-aligned muted hint, matching the mockup.
+            let mut hint: Vec<u16> = "Folders (sorted by size)  ·  double-click to drill in"
+                .encode_utf16()
+                .collect();
+            let mut hrc = RECT {
+                left: x + 20,
+                top: 0,
+                right: rc.right - 14,
+                bottom: rc.bottom,
+            };
+            SetTextColor(hdc, COLORREF(p.subtext));
+            DrawTextW(
+                hdc,
+                &mut hint,
+                &mut hrc,
+                DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS,
+            );
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let target = app
+                .crumb_segs
+                .iter()
+                .find(|(l, r, _)| x >= *l && x < *r)
+                .map(|(_, _, hti)| *hti);
+            if let Some(hti) = target {
+                SendMessageW(
+                    app.tree,
+                    TVM_SELECTITEM,
+                    WPARAM(TVGN_CARET as usize),
+                    LPARAM(hti),
+                );
+            }
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
