@@ -1089,7 +1089,15 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
             c if c == NM_DBLCLK => {
                 let act = &*(lparam.0 as *const NMITEMACTIVATE);
                 if act.iItem >= 0 {
-                    if let Some(node) = nth_visible_node(app, act.iItem) {
+                    let row = act.iItem as usize;
+                    let lr = app.list_rows.get(row).map(|b| b.row);
+                    if matches!(lr, Some(l) if l.is_folder && l.has_children) {
+                        // Expandable folder: double-click toggles its inline tree,
+                        // exactly like clicking the [+]/[-] box in front of it.
+                        toggle_expand(app, row);
+                    } else if let Some(node) = nth_visible_node(app, act.iItem) {
+                        // Files / childless folders: fall back to selecting the
+                        // node (drills into it via the hidden tree).
                         let p = node as *const _ as isize;
                         if let Some(&hti) = app.item_by_node.get(&p) {
                             SendMessageW(
