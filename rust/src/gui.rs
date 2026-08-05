@@ -2389,14 +2389,14 @@ unsafe fn on_tree_select(app: &mut AppState) {
 // single-drive scan (no All-drives root), rescan every drive; otherwise collapse
 // any inline expansions and select the All-drives root.
 unsafe fn nav_up(app: &mut AppState) {
-    if !matches!(app.last_scan, Some(ScanRequest::AllDrives)) {
-        // Single-drive view: rescan every drive to return to the overview.
-        // begin_scan_ui resets the history for the fresh navigation context.
-        start_scan_all(app.main_hwnd, app);
+    // Never fight an in-flight scan (avoids a half-built hybrid view).
+    if app.scanning {
         return;
     }
-    // Collapse inline tree expansions so Home shows just the drive rows.
-    app.expanded.clear();
+    // The multi-drive overview is the synthetic "All drives" root: a node with an
+    // empty full_path whose children are the drives. Detect it directly off the
+    // tree rather than trusting last_scan alone, so Home is right even if the
+    // selection has drifted.
     let root = SendMessageW(
         app.tree,
         TVM_GETNEXTITEM,
@@ -2404,9 +2404,25 @@ unsafe fn nav_up(app: &mut AppState) {
         LPARAM(0),
     )
     .0 as isize;
-    if root == 0 {
+    let root_lp = if root != 0 {
+        tree_item_lparam(app.tree, root)
+    } else {
+        0
+    };
+    let have_overview = matches!(app.last_scan, Some(ScanRequest::AllDrives))
+        && root_lp != 0
+        && {
+            let rn: &FolderNode = &*(root_lp as *const FolderNode);
+            rn.full_path.is_empty()
+        };
+    if !have_overview {
+        // Single-drive view (or no usable overview): rescan every drive to
+        // rebuild it. begin_scan_ui resets the history for the fresh context.
+        start_scan_all(app.main_hwnd, app);
         return;
     }
+    // Collapse inline tree expansions so Home shows just the drive rows.
+    app.expanded.clear();
     let caret = SendMessageW(
         app.tree,
         TVM_GETNEXTITEM,
@@ -2417,9 +2433,11 @@ unsafe fn nav_up(app: &mut AppState) {
     // Drop the back/forward history; Home is the new starting point.
     app.nav_hist.clear();
     app.nav_pos = -1;
+    // Always land on the drive overview, whatever was selected before.
+    app.selected_node = root_lp;
     if root != caret {
-        // on_tree_select repopulates, records root as the sole history entry,
-        // and refreshes the top bar + breadcrumb.
+        // on_tree_select repopulates from the caret, records root as the sole
+        // history entry, and refreshes the top bar + breadcrumb.
         SendMessageW(
             app.tree,
             TVM_SELECTITEM,
@@ -2427,11 +2445,10 @@ unsafe fn nav_up(app: &mut AppState) {
             LPARAM(root),
         );
     } else {
-        // Already at the root: repopulate, seed history with root, and refresh
-        // the chrome ourselves (no TVN_SELCHANGED fires).
-        if app.selected_node != 0 {
-            populate_list_folders(app, &*(app.selected_node as *const FolderNode));
-        }
+        // Already at the root: repopulate from the overview root itself (not the
+        // stale selection), seed history, and refresh the chrome ourselves since
+        // no TVN_SELCHANGED fires.
+        populate_list_folders(app, &*(root_lp as *const FolderNode));
         app.nav_hist.push(root);
         app.nav_pos = 0;
         let _ = InvalidateRect(app.topbar, None, false);
