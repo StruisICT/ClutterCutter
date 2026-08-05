@@ -28,9 +28,9 @@ use super::geometry::{delete_button_rect, nav_button_rects, pill_rect};
 use super::palette::{palette, ThemeMode};
 use super::{
     apply_side_view, apply_theme, delete_selected, draw_flat_button, erase_theme_bg, layout,
-    nav_back, nav_forward, nav_parent_hti, nav_up, on_command, on_notify, paint_panel_header,
-    panel_layout, panel_view_buttons, toggle_detach, tree_item_lparam, AppState, DRIVE_CARD_GAP,
-    DRIVE_CARD_H, ID_DRIVE_BASE, PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
+    nav_back, nav_forward, nav_up, on_command, on_notify, paint_panel_header, panel_layout,
+    panel_view_buttons, toggle_detach, tree_item_lparam, AppState, DRIVE_CARD_GAP, DRIVE_CARD_H,
+    ID_DRIVE_BASE, PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
 };
 
 // Bottom status strip: window-bg fill, a top hairline, a dark message on the
@@ -373,7 +373,7 @@ pub(crate) unsafe extern "system" fn topbar_proc(
             SetBkMode(hdc, TRANSPARENT);
             let btns = nav_button_rects(&rc);
             let enabled = [
-                nav_parent_hti(app) != 0,
+                true, // Home is always available (returns to the All-drives overview)
                 app.nav_pos > 0,
                 app.nav_pos >= 0 && (app.nav_pos as usize) < app.nav_hist.len().saturating_sub(1),
             ];

@@ -2300,10 +2300,16 @@ unsafe fn begin_scan_ui(app: &mut AppState, status_text: &str) {
     app.item_by_node.clear();
     app.populated.clear();
     app.selected_node = 0;
+    app.expanded.clear();
+    // The old tree's items are about to be destroyed; a fresh scan is a fresh
+    // navigation context, so drop the back/forward history (stale HTREEITEMs).
+    app.nav_hist.clear();
+    app.nav_pos = -1;
     // These point into the tree that's about to drop — clear before it does.
     app.side_hits.clear();
     // A fresh scan supersedes any in-place deletions.
     app.deleted_nodes.clear();
+    app.deleted_files.clear();
     if app.side_view == SideView::TopFiles || app.side_view == SideView::OldestFiles {
         SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     }
@@ -2901,30 +2907,20 @@ unsafe fn nav_forward(app: &mut AppState) {
     }
 }
 
-// HTREEITEM of the current selection's parent, or 0 at the root.
-unsafe fn nav_parent_hti(app: &AppState) -> isize {
-    let caret = SendMessageW(
-        app.tree,
-        TVM_GETNEXTITEM,
-        WPARAM(TVGN_CARET as usize),
-        LPARAM(0),
-    )
-    .0 as isize;
-    if caret == 0 {
-        return 0;
-    }
-    SendMessageW(
-        app.tree,
-        TVM_GETNEXTITEM,
-        WPARAM(TVGN_PARENT as usize),
-        LPARAM(caret),
-    )
-    .0 as isize
-}
-
 // Jumps straight to the top-level view (the "All drives" root), recording a new
-// history entry like a click.
+// "Home": return to the top-level All-drives overview and reset the Back/Forward
+// history to a clean state (Home is a fresh start). If the current view is a
+// single-drive scan (no All-drives root), rescan every drive; otherwise collapse
+// any inline expansions and select the All-drives root.
 unsafe fn nav_up(app: &mut AppState) {
+    if !matches!(app.last_scan, Some(ScanRequest::AllDrives)) {
+        // Single-drive view: rescan every drive to return to the overview.
+        // begin_scan_ui resets the history for the fresh navigation context.
+        start_scan_all(app.main_hwnd, app);
+        return;
+    }
+    // Collapse inline tree expansions so Home shows just the drive rows.
+    app.expanded.clear();
     let root = SendMessageW(
         app.tree,
         TVM_GETNEXTITEM,
@@ -2932,6 +2928,9 @@ unsafe fn nav_up(app: &mut AppState) {
         LPARAM(0),
     )
     .0 as isize;
+    if root == 0 {
+        return;
+    }
     let caret = SendMessageW(
         app.tree,
         TVM_GETNEXTITEM,
@@ -2939,13 +2938,28 @@ unsafe fn nav_up(app: &mut AppState) {
         LPARAM(0),
     )
     .0 as isize;
-    if root != 0 && root != caret {
+    // Drop the back/forward history; Home is the new starting point.
+    app.nav_hist.clear();
+    app.nav_pos = -1;
+    if root != caret {
+        // on_tree_select repopulates, records root as the sole history entry,
+        // and refreshes the top bar + breadcrumb.
         SendMessageW(
             app.tree,
             TVM_SELECTITEM,
             WPARAM(TVGN_CARET as usize),
             LPARAM(root),
         );
+    } else {
+        // Already at the root: repopulate, seed history with root, and refresh
+        // the chrome ourselves (no TVN_SELCHANGED fires).
+        if app.selected_node != 0 {
+            populate_list_folders(app, &*(app.selected_node as *const FolderNode));
+        }
+        app.nav_hist.push(root);
+        app.nav_pos = 0;
+        let _ = InvalidateRect(app.topbar, None, false);
+        let _ = InvalidateRect(app.crumb, None, false);
     }
 }
 
