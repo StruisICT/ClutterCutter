@@ -2409,12 +2409,10 @@ unsafe fn nav_up(app: &mut AppState) {
     } else {
         0
     };
-    let have_overview = matches!(app.last_scan, Some(ScanRequest::AllDrives))
-        && root_lp != 0
-        && {
-            let rn: &FolderNode = &*(root_lp as *const FolderNode);
-            rn.full_path.is_empty()
-        };
+    let have_overview = matches!(app.last_scan, Some(ScanRequest::AllDrives)) && root_lp != 0 && {
+        let rn: &FolderNode = &*(root_lp as *const FolderNode);
+        rn.full_path.is_empty()
+    };
     if !have_overview {
         // Single-drive view (or no usable overview): rescan every drive to
         // rebuild it. begin_scan_ui resets the history for the fresh context.
