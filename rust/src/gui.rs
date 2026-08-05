@@ -48,10 +48,10 @@ use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_D
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
     GetSysColorBrush, GetWindowDC, InvalidateRect, MapWindowPoints, RedrawWindow, ReleaseDC,
-    ScreenToClient, SelectObject, SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE,
-    COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX,
-    DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT,
-    RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
+    SelectObject, SetBkMode, SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT,
+    COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_LEFT, DT_RIGHT,
+    DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, RDW_ALLCHILDREN,
+    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -85,9 +85,7 @@ use windows::Win32::UI::Controls::{
     TVM_SETTEXTCOLOR, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
     TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    EnableWindow, GetCapture, GetFocus, ReleaseCapture, SetCapture,
-};
+use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus};
 use windows::Win32::UI::Shell::{
     DefSubclassProc, IsUserAnAdmin, SHFileOperationW, SetWindowSubclass, ShellExecuteW,
     FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE, SHFILEOPSTRUCTW,
@@ -98,18 +96,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsZoomed, KillTimer,
     LoadCursorW, LoadIconW, MessageBoxW, MoveWindow, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SendMessageW, SetCursor, SetForegroundWindow, SetMenu, SetParent, SetTimer,
+    RegisterClassExW, SendMessageW, SetForegroundWindow, SetMenu, SetParent, SetTimer,
     SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TrackPopupMenu,
     TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW,
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW,
     IDC_SIZEWE, IDI_APPLICATION, IDYES, MB_ICONWARNING, MB_YESNO, MENUBARINFO, MENUITEMINFOW,
     MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_STRING, MSG, OBJID_MENU, SM_CXVSCROLL,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_NORMAL,
-    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_HSCROLL, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY,
-    WM_PAINT, WM_SETCURSOR, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER,
-    WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND,
+    WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_HSCROLL, WM_LBUTTONDOWN, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_SETREDRAW,
+    WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE,
+    WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -2405,7 +2403,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     let float_wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: Default::default(),
-        lpfnWndProc: Some(float_proc),
+        lpfnWndProc: Some(chrome::float_proc),
         hInstance: hinstance.into(),
         hIcon: load_app_icon(),
         hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
@@ -2437,7 +2435,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     let split_wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
-        lpfnWndProc: Some(splitter_proc),
+        lpfnWndProc: Some(chrome::splitter_proc),
         hInstance: hinstance.into(),
         hCursor: LoadCursorW(None, IDC_SIZEWE).unwrap_or_default(),
         hbrBackground: GetSysColorBrush(COLOR_BTNFACE),
@@ -4595,83 +4593,7 @@ unsafe extern "system" fn panel_proc(
     }
 }
 
-// The draggable divider between the main list and the side panel. Dragging it
-// updates `panel_frac` and re-flows the layout live.
-unsafe extern "system" fn splitter_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
-    if app_ptr.is_null() {
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
-    }
-    let app = &mut *app_ptr;
-    match msg {
-        WM_SETCURSOR => {
-            let _ = SetCursor(LoadCursorW(None, IDC_SIZEWE).unwrap_or_default());
-            LRESULT(1)
-        }
-        WM_LBUTTONDOWN => {
-            SetCapture(hwnd);
-            LRESULT(0)
-        }
-        WM_MOUSEMOVE => {
-            if GetCapture() == hwnd {
-                let main = app.main_hwnd;
-                let mut pt = POINT::default();
-                let _ = GetCursorPos(&mut pt);
-                let _ = ScreenToClient(main, &mut pt);
-                let mut rc = RECT::default();
-                let _ = GetClientRect(main, &mut rc);
-                let avail = (rc.right - SIDEBAR_W).max(1);
-                // The splitter's left edge tracks the cursor; the panel is
-                // everything to its right (minus the splitter width).
-                let panel_w = (rc.right - pt.x - SPLIT_W).clamp(180, (avail - 180).max(180));
-                app.panel_frac = (panel_w as f64 / avail as f64).clamp(0.1, 0.9);
-                layout(main, app);
-            }
-            LRESULT(0)
-        }
-        WM_LBUTTONUP => {
-            let _ = ReleaseCapture();
-            LRESULT(0)
-        }
-        WM_ERASEBKGND => erase_theme_bg(app, hwnd, HDC(wparam.0 as _)),
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-    }
-}
-
-unsafe extern "system" fn float_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
-    if app_ptr.is_null() {
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
-    }
-    let app = &mut *app_ptr;
-    match msg {
-        WM_SIZE => {
-            if app.detached {
-                let mut rc = RECT::default();
-                let _ = GetClientRect(hwnd, &mut rc);
-                let _ = MoveWindow(app.panel, 0, 0, rc.right, rc.bottom, true);
-            }
-            LRESULT(0)
-        }
-        WM_ERASEBKGND => erase_theme_bg(app, hwnd, HDC(wparam.0 as _)),
-        WM_CLOSE => {
-            // Closing the frame re-attaches the panel instead of destroying it.
-            toggle_detach(app.main_hwnd, app);
-            LRESULT(0)
-        }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-    }
-}
+// The splitter + detached-panel-frame WNDPROCs live in `gui::chrome`.
 
 // DFS for the pointer-path root..=target. Recursion depth = folder nesting
 // depth, which Windows caps well below any stack concern.
