@@ -13,18 +13,18 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, DrawIconEx, GetClientRect,
-    GetMessageW, GetWindowLongPtrW, GetWindowRect, IsWindow, LoadCursorW, RegisterClassExW,
-    SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-    DI_NORMAL, GWLP_USERDATA, HMENU, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PAINT, WNDCLASSEXW, WS_CAPTION, WS_POPUP,
-    WS_SYSMENU,
+    CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow, DispatchMessageW, DrawIconEx,
+    GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect, IsWindow, LoadCursorW,
+    RegisterClassExW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage,
+    CS_HREDRAW, CS_VREDRAW, DI_NORMAL, GWLP_USERDATA, HMENU, IDC_ARROW, MSG, SW_SHOW,
+    WINDOW_EX_STYLE, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PAINT, WNDCLASSEXW,
+    WS_CAPTION, WS_POPUP, WS_SYSMENU,
 };
 
 use crate::scanner::wide;
 
 use super::palette::palette;
-use super::{load_app_icon, shell_exec, AppState, VK_ESCAPE, VK_RETURN};
+use super::{load_app_icon, load_app_icon_sized, shell_exec, AppState, VK_ESCAPE, VK_RETURN};
 
 const COFFEE_URL: &str = "https://buymeacoffee.com/struis112";
 const GITHUB_URL: &str = "https://github.com/StruisICT/ClutterCutter";
@@ -134,8 +134,19 @@ unsafe fn paint_about(hwnd: HWND, app_ptr: *mut AppState) {
     SetBkMode(hdc, TRANSPARENT);
     app.about_hit.clear();
 
-    let icon = load_app_icon();
+    // Load the icon at the exact 48px draw size so it stays crisp (LoadIconW's
+    // 32px default would be upscaled and look distorted). The sized icon is owned
+    // and freed after drawing; the shared fallback must not be destroyed.
+    let sized = load_app_icon_sized(48);
+    let icon = if sized.is_invalid() {
+        load_app_icon()
+    } else {
+        sized
+    };
     let _ = DrawIconEx(hdc, (cw - 48) / 2, 22, icon, 48, 48, 0, None, DI_NORMAL);
+    if !sized.is_invalid() {
+        let _ = DestroyIcon(sized);
+    }
 
     let old = SelectObject(hdc, HGDIOBJ(app.font_title.0));
     SetTextColor(hdc, COLORREF(p.text));
