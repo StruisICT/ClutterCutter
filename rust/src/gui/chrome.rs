@@ -435,7 +435,7 @@ pub(crate) unsafe extern "system" fn topbar_proc(
             // the active side's glyph on the knob.
             SelectObject(hdc, HGDIOBJ(app.font_icon.0));
             let mut sun: Vec<u16> = "\u{E706}".encode_utf16().collect(); // Brightness
-            let mut moon: Vec<u16> = "\u{E708}".encode_utf16().collect(); // QuietHours
+            let mut moon: Vec<u16> = "\u{F0CE}".encode_utf16().collect(); // ClearNight (crescent)
             let lrc = RECT {
                 left: pr.left,
                 right: mid,
