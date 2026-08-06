@@ -14,7 +14,7 @@ name = "cluttercutter-cli"
 path = "src/bin/cli.rs"
 
 [build-dependencies]
-embed-resource = "2"
+embed-resource = "3"
 
 [dependencies]
 windows = { version = "0.58", features = [
