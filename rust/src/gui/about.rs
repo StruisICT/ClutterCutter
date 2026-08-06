@@ -13,12 +13,12 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow, DispatchMessageW, DrawIconEx,
-    GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect, IsWindow, LoadCursorW,
-    RegisterClassExW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage,
-    CS_HREDRAW, CS_VREDRAW, DI_NORMAL, GWLP_USERDATA, HMENU, IDC_ARROW, MSG, SW_SHOW,
-    WINDOW_EX_STYLE, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PAINT, WNDCLASSEXW,
-    WS_CAPTION, WS_POPUP, WS_SYSMENU,
+    AdjustWindowRect, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow,
+    DispatchMessageW, DrawIconEx, GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect,
+    IsWindow, LoadCursorW, RegisterClassExW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow,
+    TranslateMessage, CS_HREDRAW, CS_VREDRAW, DI_NORMAL, GWLP_USERDATA, HMENU, IDC_ARROW, MSG,
+    SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PAINT,
+    WNDCLASSEXW, WS_CAPTION, WS_POPUP, WS_SYSMENU,
 };
 
 use crate::scanner::wide;
@@ -45,7 +45,17 @@ pub(crate) unsafe fn show_about(parent: HWND, app: &mut AppState) {
         lpszClassName: class,
         ..Default::default()
     });
-    let (w, h) = (460, 300);
+    // (w, h) is the desired client area; grow the window so the title bar doesn't
+    // clip the content (matches the Settings window).
+    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    let mut wr = RECT {
+        left: 0,
+        top: 0,
+        right: 460,
+        bottom: 336,
+    };
+    let _ = AdjustWindowRect(&mut wr, style, false);
+    let (w, h) = (wr.right - wr.left, wr.bottom - wr.top);
     let mut pr = RECT::default();
     let _ = GetWindowRect(parent, &mut pr);
     let x = pr.left + ((pr.right - pr.left) - w) / 2;
@@ -55,7 +65,7 @@ pub(crate) unsafe fn show_about(parent: HWND, app: &mut AppState) {
         WINDOW_EX_STYLE(0),
         class,
         PCWSTR(title.as_ptr()),
-        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        style,
         x,
         y,
         w,
@@ -194,6 +204,11 @@ unsafe fn paint_about(hwnd: HWND, app_ptr: *mut AppState) {
     let sr = about_text(hdc, site, lx, y2);
     app.about_hit.push((sr, 2));
 
+    // "Check for updates" link — an on-demand check against GitHub releases.
+    SetTextColor(hdc, COLORREF(p.blue));
+    let upd = about_center(hdc, "\u{21BB}  Check for updates", cw, 264);
+    app.about_hit.push((upd, 3));
+
     // No OK button: like InLook's About card, the window closes via the
     // title-bar close (\u{00d7}) or Esc.
     SelectObject(hdc, old);
@@ -224,9 +239,8 @@ unsafe extern "system" fn about_proc(
                             0 => open_url(COFFEE_URL),
                             1 => open_url(GITHUB_URL),
                             2 => open_url(SITE_URL),
-                            _ => {
-                                let _ = DestroyWindow(hwnd);
-                            }
+                            3 => super::update::check_now(),
+                            _ => {}
                         }
                         break;
                     }
