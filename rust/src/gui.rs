@@ -21,6 +21,7 @@ mod geometry;
 mod listview;
 mod palette;
 mod scan;
+mod settings;
 
 use crate::analysis::{oldest_n_files, top_n_files};
 use crate::format::{format_bytes, format_count, join_path};
@@ -173,6 +174,7 @@ const ID_MENU_THEME_AUTO: u16 = 5101;
 const ID_MENU_THEME_LIGHT: u16 = 5102;
 const ID_MENU_THEME_DARK: u16 = 5103;
 const ID_MENU_ABOUT: u16 = 5200;
+const ID_MENU_SETTINGS: u16 = 5201;
 const ID_MENU_VIEW_NONE: u16 = 5301;
 const ID_MENU_VIEW_TOPFILES: u16 = 5302;
 const ID_MENU_VIEW_OLDEST: u16 = 5303;
@@ -432,6 +434,16 @@ struct AppState {
     // the tree/side views hide them without the pointers dangling.
     deleted_files: HashSet<isize>,
     recycle_result: Arc<Mutex<Option<bool>>>,
+
+    // ---- User settings (persisted to settings.cfg via gui::settings; theme_mode
+    // above is part of this set). ----
+    units_binary: bool,
+    default_side: SideView,
+    scan_on_launch: bool,
+    confirm_recycle: bool,
+    show_sidebar: bool,
+    // Clickable hotspots of the Settings modal: (rect, action id).
+    settings_hit: Vec<(RECT, i32)>,
 }
 
 #[derive(Copy, Clone)]
@@ -476,6 +488,10 @@ pub fn run() {
             return;
         }
 
+        // Load persisted user settings and apply the process-wide ones now.
+        let settings = settings::load();
+        crate::format::set_binary_units(settings.units_binary);
+
         let app = Box::new(AppState {
             main_hwnd: HWND::default(),
             drives: enumerate_drives(),
@@ -518,7 +534,7 @@ pub fn run() {
             list_rows: Vec::new(),
             expanded: HashSet::new(),
             last_scan: None,
-            theme_mode: ThemeMode::Auto,
+            theme_mode: settings.theme,
             is_dark: false,
             menu: HMENU::default(),
             side_view: SideView::None,
@@ -542,6 +558,12 @@ pub fn run() {
             deleted_nodes: HashSet::new(),
             deleted_files: HashSet::new(),
             recycle_result: Arc::new(Mutex::new(None)),
+            units_binary: settings.units_binary,
+            default_side: settings.default_side,
+            scan_on_launch: settings.scan_on_launch,
+            confirm_recycle: settings.confirm_recycle,
+            show_sidebar: settings.show_sidebar,
+            settings_hit: Vec::new(),
         });
         let app_ptr = Box::into_raw(app);
 
@@ -577,14 +599,17 @@ pub fn run() {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
 
-        // Open the "Top largest files" side panel by default; it fills in when
-        // the startup scan below finishes.
-        apply_side_view(hwnd, &mut *app_ptr, SideView::TopFiles);
+        // Open the configured default side panel; it fills in when the startup
+        // scan below finishes.
+        let default_side = (*app_ptr).default_side;
+        apply_side_view(hwnd, &mut *app_ptr, default_side);
 
         // Kick off a full scan of every drive right away (alphabetical, since
-        // enumerate_drives walks A..Z). The worker posts results back once the
-        // message loop below is pumping.
-        start_scan_all(hwnd, &mut *app_ptr);
+        // enumerate_drives walks A..Z), unless the user disabled scan-on-launch.
+        // The worker posts results back once the message loop below is pumping.
+        if (*app_ptr).scan_on_launch {
+            start_scan_all(hwnd, &mut *app_ptr);
+        }
 
         let mut msg = MSG::default();
         loop {
@@ -864,9 +889,21 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
         ID_MENU_ABOUT => {
             about::show_about(hwnd, app);
         }
-        ID_MENU_THEME_AUTO => apply_theme(hwnd, app, ThemeMode::Auto),
-        ID_MENU_THEME_LIGHT => apply_theme(hwnd, app, ThemeMode::Light),
-        ID_MENU_THEME_DARK => apply_theme(hwnd, app, ThemeMode::Dark),
+        ID_MENU_SETTINGS => {
+            settings::show_settings(hwnd, app);
+        }
+        ID_MENU_THEME_AUTO => {
+            apply_theme(hwnd, app, ThemeMode::Auto);
+            settings::save_from(app);
+        }
+        ID_MENU_THEME_LIGHT => {
+            apply_theme(hwnd, app, ThemeMode::Light);
+            settings::save_from(app);
+        }
+        ID_MENU_THEME_DARK => {
+            apply_theme(hwnd, app, ThemeMode::Dark);
+            settings::save_from(app);
+        }
         ID_MENU_VIEW_NONE => apply_side_view(hwnd, app, SideView::None),
         ID_MENU_VIEW_TOPFILES => apply_side_view(hwnd, app, SideView::TopFiles),
         ID_MENU_VIEW_OLDEST => apply_side_view(hwnd, app, SideView::OldestFiles),
@@ -2089,8 +2126,8 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     .expect("status bar");
     SetWindowLongPtrW(app.status, GWLP_USERDATA, app_lp);
 
-    // Apply initial theme.
-    apply_theme(hwnd, app, ThemeMode::Auto);
+    // Apply the persisted theme (defaults to Auto the first run).
+    apply_theme(hwnd, app, app.theme_mode);
 }
 
 // The status-strip WNDPROC lives in `gui::chrome`.
@@ -2113,6 +2150,13 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
             w!("Restart as &Administrator..."),
         );
     }
+    let _ = AppendMenuW(file_pop, MF_SEPARATOR, 0, PCWSTR::null());
+    let _ = AppendMenuW(
+        file_pop,
+        MF_STRING,
+        ID_MENU_SETTINGS as usize,
+        w!("&Settings..."),
+    );
     let _ = AppendMenuW(file_pop, MF_SEPARATOR, 0, PCWSTR::null());
     let _ = AppendMenuW(file_pop, MF_STRING, ID_MENU_EXIT as usize, w!("E&xit"));
     let _ = AppendMenuW(menu, MF_POPUP, file_pop.0 as usize, w!("&File"));
@@ -2214,11 +2258,16 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     // Row 0: branded top bar spanning the full width.
     let _ = MoveWindow(app.topbar, 0, 0, rc.right, TOPBAR_H, true);
 
-    // Row 1: left DRIVES sidebar, then the content area (breadcrumb + table +
-    // optional side panel).
+    // Row 1: left DRIVES sidebar (hidden if the user turned it off), then the
+    // content area (breadcrumb + table + optional side panel).
     let top = TOPBAR_H;
     let body_h = (rc.bottom - top - STATUS_H).max(0);
-    let _ = MoveWindow(app.sidebar, 0, top, SIDEBAR_W, body_h, true);
+    let sidebar_w = if app.show_sidebar { SIDEBAR_W } else { 0 };
+    let _ = ShowWindow(
+        app.sidebar,
+        if app.show_sidebar { SW_SHOW } else { SW_HIDE },
+    );
+    let _ = MoveWindow(app.sidebar, 0, top, sidebar_w, body_h, true);
     // The Scan-all button sits at the bottom of the sidebar (its child now).
     let sab_h = 34;
     let sab_margin = 12;
@@ -2231,7 +2280,7 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
         true,
     );
 
-    let content_x = SIDEBAR_W;
+    let content_x = sidebar_w;
     let content_w = (rc.right - content_x).max(0);
     // Breadcrumb spans the content area above the table.
     let _ = MoveWindow(app.crumb, content_x, top, content_w, CRUMB_H, true);
@@ -2925,7 +2974,7 @@ unsafe fn delete_selected(hwnd: HWND, app: &mut AppState) {
         if n_files == 1 { "" } else { "s" },
         format_bytes(bytes),
     );
-    if !confirm_delete(hwnd, &prompt) {
+    if app.confirm_recycle && !confirm_delete(hwnd, &prompt) {
         return;
     }
 
