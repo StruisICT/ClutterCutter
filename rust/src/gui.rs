@@ -22,6 +22,7 @@ mod listview;
 mod palette;
 mod scan;
 mod settings;
+mod update;
 
 use crate::analysis::{oldest_n_files, top_n_files};
 use crate::format::{format_bytes, format_count, join_path};
