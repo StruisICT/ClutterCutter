@@ -861,7 +861,7 @@ mod tests {
         // value-offset points near the record end. Parsing at every truncation
         // length must never read past the record (pre-hardening this aborted when
         // the value-offset field itself fell outside the record).
-        let mut rec = vec![0u8; 96];
+        let mut rec = [0u8; 96];
         rec[0..4].copy_from_slice(b"FILE");
         rec[20..22].copy_from_slice(&56u16.to_le_bytes()); // first attribute at 56
         rec[22] = 0x01; // in-use
@@ -878,7 +878,7 @@ mod tests {
     fn extract_mft_data_runs_never_panics_on_truncated_data_attr() {
         // A non-resident $DATA attribute header near the record end; every
         // truncation must be handled without reading past the record.
-        let mut rec = vec![0u8; 96];
+        let mut rec = [0u8; 96];
         rec[20..22].copy_from_slice(&40u16.to_le_bytes()); // first attribute at 40
         let a = 40;
         rec[a..a + 4].copy_from_slice(&0x80u32.to_le_bytes()); // $DATA
