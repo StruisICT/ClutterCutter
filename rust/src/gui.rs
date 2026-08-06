@@ -126,10 +126,6 @@ const ID_SIDEBAR: u16 = 307;
 const ID_CRUMB: u16 = 308;
 const ID_STATUS: u16 = 400;
 
-// Sum of the fixed main-list column widths (everything except the stretching
-// Name column): 128 + 90 + 90 + 80 + 80 + 120. Keep in sync with insert_column.
-const MAIN_FIXED_COLS_W: i32 = 128 + 90 + 90 + 80 + 80 + 120;
-
 // Struis ICT redesign geometry.
 const TOPBAR_H: i32 = 50; // branded strip: logo + title + theme pill
 const SIDEBAR_W: i32 = 244; // left DRIVES column
@@ -442,6 +438,10 @@ struct AppState {
     scan_on_launch: bool,
     confirm_recycle: bool,
     show_sidebar: bool,
+    // Main-list column visibility (logical id 0..6). phys_to_logical maps the
+    // physical listview column index (visible columns only) back to the logical id.
+    col_visible: [bool; 7],
+    phys_to_logical: Vec<i32>,
     // Clickable hotspots of the Settings modal: (rect, action id).
     settings_hit: Vec<(RECT, i32)>,
 }
@@ -563,6 +563,8 @@ pub fn run() {
             scan_on_launch: settings.scan_on_launch,
             confirm_recycle: settings.confirm_recycle,
             show_sidebar: settings.show_sidebar,
+            col_visible: settings.col_visible,
+            phys_to_logical: compute_phys_to_logical(&settings.col_visible),
             settings_hit: Vec::new(),
         });
         let app_ptr = Box::into_raw(app);
@@ -1171,7 +1173,11 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
             // reverse. The choice persists across runs.
             c if c == LVN_COLUMNCLICK => {
                 let nmlv = &*(lparam.0 as *const NMLISTVIEW);
-                let col = nmlv.iSubItem;
+                let col = app
+                    .phys_to_logical
+                    .get(nmlv.iSubItem as usize)
+                    .copied()
+                    .unwrap_or(nmlv.iSubItem);
                 if (0..=6).contains(&col) {
                     if app.sort_col == col {
                         app.sort_desc = !app.sort_desc;
@@ -1214,6 +1220,66 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
 const NAME_COL: i32 = 0;
 const PCT_COL: i32 = 1;
 const MODIFIED_COL: i32 = 6;
+
+// The seven logical main-list columns: (header, fixed width, right-aligned). Name
+// (0) is the column that stretches to fill; the rest are fixed-width. Any column
+// except Name and Size (2) can be hidden from Settings — visibility is tracked in
+// AppState.col_visible, and phys_to_logical maps a physical listview column index
+// (only the visible ones exist) back to its logical id above.
+const MAIN_COLS: [(&str, i32, bool); 7] = [
+    ("NAME", 320, false),
+    ("% OF PARENT", 128, false),
+    ("SIZE", 90, true),
+    ("OWN SIZE", 90, true),
+    ("FILES", 80, true),
+    ("FOLDERS", 80, true),
+    ("MODIFIED", 120, false),
+];
+// Logical columns the user is not allowed to hide.
+const ALWAYS_SHOWN_COLS: [usize; 2] = [0, 2]; // Name, Size
+
+fn compute_phys_to_logical(col_visible: &[bool; 7]) -> Vec<i32> {
+    (0..7)
+        .filter(|&c| col_visible[c])
+        .map(|c| c as i32)
+        .collect()
+}
+
+// Combined fixed width of the visible non-Name columns (drives the Name column's
+// stretch in layout()).
+fn main_fixed_cols_w(col_visible: &[bool; 7]) -> i32 {
+    (1..7)
+        .filter(|&c| col_visible[c])
+        .map(|c| MAIN_COLS[c].1)
+        .sum()
+}
+
+// (Re)insert the main list's columns for the current visibility set and refresh
+// the physical->logical map. Called once at creation and whenever Settings
+// toggles a column.
+unsafe fn insert_main_columns(app: &mut AppState) {
+    while SendMessageW(app.list, LVM_DELETECOLUMN, WPARAM(0), LPARAM(0)).0 != 0 {}
+    let mut phys = 0;
+    for (logical, (hdr, w, right)) in MAIN_COLS.iter().enumerate() {
+        if app.col_visible[logical] {
+            insert_column(app.list, phys, hdr, *w, *right);
+            phys += 1;
+        }
+    }
+    app.phys_to_logical = compute_phys_to_logical(&app.col_visible);
+}
+
+// Rebuild the columns after a visibility change: re-layout (Name width depends on
+// which columns are present), restore the sort arrow, and repopulate.
+unsafe fn rebuild_columns(app: &mut AppState) {
+    insert_main_columns(app);
+    update_sort_arrows(app);
+    layout(app.main_hwnd, app);
+    if app.selected_node != 0 {
+        populate_list_folders(app, &*(app.selected_node as *const FolderNode));
+    }
+    let _ = InvalidateRect(app.list, None, true);
+}
 // Tree layout: indent per depth level, and the width reserved for the expand box.
 const TREE_INDENT: i32 = 16;
 const TREE_GLYPH_W: i32 = 16;
@@ -1308,7 +1374,13 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     if stage != (CDDS_SUBITEM.0 | CDDS_ITEMPREPAINT.0) {
         return LRESULT(CDRF_DODEFAULT as isize);
     }
-    let sub = lv.iSubItem;
+    // The listview reports the physical column index; map it to the logical id so
+    // all the per-column drawing below is oblivious to which columns are hidden.
+    let sub = app
+        .phys_to_logical
+        .get(lv.iSubItem as usize)
+        .copied()
+        .unwrap_or(lv.iSubItem);
     let row = lv.nmcd.dwItemSpec;
     let br = match app.list_rows.get(row) {
         Some(b) => b,
@@ -2075,13 +2147,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     // Columns mirror the Struis ICT design: Name, a custom-drawn "% of parent"
     // bar, then the numeric/date detail columns. Keep MAIN_FIXED_COLS_W in sync
     // with the fixed widths below (everything except the stretching Name column).
-    insert_column(app.list, 0, "NAME", 320, false);
-    insert_column(app.list, 1, "% OF PARENT", 128, false);
-    insert_column(app.list, 2, "SIZE", 90, true);
-    insert_column(app.list, 3, "OWN SIZE", 90, true);
-    insert_column(app.list, 4, "FILES", 80, true);
-    insert_column(app.list, 5, "FOLDERS", 80, true);
-    insert_column(app.list, 6, "MODIFIED", 120, false);
+    insert_main_columns(app); // inserts only the visible columns (see MAIN_COLS)
     update_sort_arrows(app); // reflect the persisted/default sort on the header
 
     let status_initial = if app.is_admin {
@@ -2328,7 +2394,7 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     // panel over) leaves a growing block of empty list to the right of the
     // last column. All columns except Name are fixed (MAIN_FIXED_COLS_W).
     let vscroll = GetSystemMetrics(SM_CXVSCROLL);
-    let name_w = (list_w - MAIN_FIXED_COLS_W - vscroll - 4).max(120);
+    let name_w = (list_w - main_fixed_cols_w(&app.col_visible) - vscroll - 4).max(120);
     SendMessageW(
         app.list,
         LVM_SETCOLUMNWIDTH,
@@ -3916,7 +3982,8 @@ unsafe fn update_sort_arrows(app: &AppState) {
             LPARAM(&mut item as *mut _ as isize),
         );
         item.fmt.0 &= !(HDF_SORTUP.0 | HDF_SORTDOWN.0);
-        if i == app.sort_col {
+        let logical = app.phys_to_logical.get(i as usize).copied().unwrap_or(i);
+        if logical == app.sort_col {
             item.fmt.0 |= if app.sort_desc {
                 HDF_SORTDOWN.0
             } else {
