@@ -24,7 +24,7 @@ use crate::format::format_bytes;
 use crate::types::FolderNode;
 
 use super::darkmode::{apply_theme, erase_theme_bg};
-use super::gdi::{card_round, fill_rect, fill_round};
+use super::gdi::{card_round, draw_pill_aa, fill_rect, fill_round};
 use super::geometry::{delete_button_rect, home_button_rect, pill_rect};
 use super::palette::{palette, ThemeMode};
 use super::{
@@ -398,39 +398,14 @@ pub(crate) unsafe extern "system" fn topbar_proc(
                 DT_SINGLELINE | DT_VCENTER | DT_CENTER,
             );
 
-            // Theme toggle: a bordered pill with a sliding knob. Both glyphs sit
-            // on the track; a rounded knob slides over the active side.
+            // Theme toggle: a bordered pill with a sliding knob. The track + knob
+            // are drawn anti-aliased (supersampled) for smooth edges; the inactive
+            // side shows its glyph on the track, the active side shows it on the
+            // knob.
             let pr = pill_rect(&rc);
             let pill_r = (pr.bottom - pr.top) / 2;
-            card_round(hdc, &pr, pill_r, p.track, p.subtext, 1);
             let mid = (pr.left + pr.right) / 2;
             let light_active = !app.is_dark;
-            SelectObject(hdc, HGDIOBJ(app.font_icon.0));
-            let mut sun: Vec<u16> = "\u{E706}".encode_utf16().collect(); // Brightness
-            let mut moon: Vec<u16> = "\u{E708}".encode_utf16().collect(); // QuietHours
-            let mut lrc = RECT {
-                left: pr.left,
-                right: mid,
-                ..pr
-            };
-            let mut rrc = RECT {
-                left: mid,
-                right: pr.right,
-                ..pr
-            };
-            SetTextColor(hdc, COLORREF(p.subtext));
-            DrawTextW(
-                hdc,
-                &mut sun,
-                &mut lrc,
-                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-            );
-            DrawTextW(
-                hdc,
-                &mut moon,
-                &mut rrc,
-                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-            );
             let inset = 3;
             let knob = RECT {
                 left: if light_active {
@@ -452,27 +427,41 @@ pub(crate) unsafe extern "system" fn topbar_proc(
             } else {
                 (0x001E_1E1Eu32, 0x00FF_FFFFu32) // dark knob, white glyph
             };
-            fill_round(hdc, &knob, knob_r, knob_col);
+            draw_pill_aa(
+                hdc, &pr, pill_r, p.track, p.subtext, 1, &knob, knob_r, knob_col, p.win_bg,
+            );
+
+            // Glyphs (kept crisp at 1x): the inactive side's glyph on the track,
+            // the active side's glyph on the knob.
+            SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+            let mut sun: Vec<u16> = "\u{E706}".encode_utf16().collect(); // Brightness
+            let mut moon: Vec<u16> = "\u{E708}".encode_utf16().collect(); // QuietHours
+            let lrc = RECT {
+                left: pr.left,
+                right: mid,
+                ..pr
+            };
+            let rrc = RECT {
+                left: mid,
+                right: pr.right,
+                ..pr
+            };
+            SetTextColor(hdc, COLORREF(p.subtext));
+            let mut inactive_rc = if light_active { rrc } else { lrc };
+            DrawTextW(
+                hdc,
+                if light_active { &mut moon } else { &mut sun },
+                &mut inactive_rc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
             SetTextColor(hdc, COLORREF(on_knob));
-            if light_active {
-                let mut s2: Vec<u16> = "\u{E706}".encode_utf16().collect();
-                let mut kr = knob;
-                DrawTextW(
-                    hdc,
-                    &mut s2,
-                    &mut kr,
-                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-                );
-            } else {
-                let mut m2: Vec<u16> = "\u{E708}".encode_utf16().collect();
-                let mut kr = knob;
-                DrawTextW(
-                    hdc,
-                    &mut m2,
-                    &mut kr,
-                    DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-                );
-            }
+            let mut kr = knob;
+            DrawTextW(
+                hdc,
+                if light_active { &mut sun } else { &mut moon },
+                &mut kr,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
 
             SelectObject(hdc, old);
             let _ = EndPaint(hwnd, &ps);
