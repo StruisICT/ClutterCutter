@@ -30,10 +30,10 @@ pub(crate) fn home_button_rect(client: &RECT) -> RECT {
 }
 
 /// The Delete-selected button, sitting just right of the Home button with a
-/// little extra separation.
+/// small gap.
 pub(crate) fn delete_button_rect(client: &RECT) -> RECT {
     let (bw, bh, gap, x0) = (34, 32, 6, 14);
-    let l = x0 + (bw + gap) + 12;
+    let l = x0 + bw + gap;
     let ty = (client.bottom - bh) / 2;
     RECT {
         left: l,

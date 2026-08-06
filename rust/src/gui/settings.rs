@@ -7,18 +7,25 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, EndPaint, InvalidateRect, SelectObject, SetBkMode, SetTextColor, UpdateWindow,
-    DT_CENTER, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
+    BeginPaint, DrawTextW, EndPaint, InvalidateRect, SelectObject, SetBkMode, SetTextColor,
+    UpdateWindow, DT_CALCRECT, DT_CENTER, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK,
+    HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
-    GetWindowLongPtrW, GetWindowRect, IsWindow, LoadCursorW, RegisterClassExW, SetForegroundWindow,
-    SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU,
-    IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_PAINT, WNDCLASSEXW, WS_CAPTION, WS_POPUP, WS_SYSMENU,
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    EnableWindow, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
+use windows::Win32::UI::WindowsAndMessaging::{
+    AdjustWindowRect, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+    GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect, IsWindow, LoadCursorW,
+    RegisterClassExW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage,
+    CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE,
+    WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_PAINT, WNDCLASSEXW,
+    WS_CAPTION, WS_POPUP, WS_SYSMENU,
+};
+
+// Not re-exported by the windows crate's WindowsAndMessaging module.
+const WM_MOUSELEAVE: u32 = 0x02A3;
 
 use crate::scanner::wide;
 
@@ -178,6 +185,36 @@ const A_TOG_SIDEBAR: i32 = 42;
 // Column-visibility toggles carry the logical column id (1,3,4,5,6) as 100 + id.
 const A_COL_BASE: i32 = 100;
 
+// The hideable columns, in display order: (label, logical id, ⓘ description). The
+// description shows in a hover tooltip on the info icon.
+const COLUMN_ROWS: [(&str, i32, &str); 5] = [
+    (
+        "% of parent",
+        1,
+        "How much of the parent folder's size this item takes up, shown as a bar and percentage.",
+    ),
+    (
+        "Own size",
+        3,
+        "Size of the files directly in this folder only, excluding everything in its subfolders.",
+    ),
+    (
+        "Files",
+        4,
+        "Total number of files inside this folder, counting all of its subfolders.",
+    ),
+    (
+        "Folders",
+        5,
+        "Total number of subfolders inside this folder, counting all nested levels.",
+    ),
+    (
+        "Modified",
+        6,
+        "The date this folder's contents were most recently changed.",
+    ),
+];
+
 const WIN_W: i32 = 460;
 const WIN_H: i32 = 636;
 
@@ -195,20 +232,32 @@ pub(crate) unsafe fn show_settings(parent: HWND, app: &mut AppState) {
         lpszClassName: class,
         ..Default::default()
     });
+    // WIN_W/WIN_H are the desired *client* size; grow the window so the title bar
+    // doesn't eat into the painted area (otherwise the footer gets clipped).
+    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    let mut wr = RECT {
+        left: 0,
+        top: 0,
+        right: WIN_W,
+        bottom: WIN_H,
+    };
+    let _ = AdjustWindowRect(&mut wr, style, false);
+    let win_w = wr.right - wr.left;
+    let win_h = wr.bottom - wr.top;
     let mut pr = RECT::default();
     let _ = GetWindowRect(parent, &mut pr);
-    let x = pr.left + ((pr.right - pr.left) - WIN_W) / 2;
-    let y = pr.top + ((pr.bottom - pr.top) - WIN_H) / 2;
+    let x = pr.left + ((pr.right - pr.left) - win_w) / 2;
+    let y = pr.top + ((pr.bottom - pr.top) - win_h) / 2;
     let title = wide("Settings");
     let hwnd = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         class,
         PCWSTR(title.as_ptr()),
-        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        style,
         x,
         y,
-        WIN_W,
-        WIN_H,
+        win_w,
+        win_h,
         parent,
         HMENU::default(),
         hinstance,
@@ -373,6 +422,54 @@ unsafe fn section(hdc: windows::Win32::Graphics::Gdi::HDC, app: &AppState, title
     fill_rect(hdc, &hair, p.hairline);
 }
 
+// A themed tooltip bubble to the right of `anchor`, word-wrapped to a max width.
+unsafe fn draw_tooltip(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    app: &AppState,
+    anchor: RECT,
+    text: &str,
+) {
+    let p = palette(app.is_dark);
+    SelectObject(hdc, HGDIOBJ(app.font_small.0));
+    let maxw = 224;
+    let mut v: Vec<u16> = text.encode_utf16().collect();
+    let mut calc = RECT {
+        left: 0,
+        top: 0,
+        right: maxw,
+        bottom: 0,
+    };
+    DrawTextW(hdc, &mut v, &mut calc, DT_CALCRECT | DT_WORDBREAK);
+    let tw = calc.right - calc.left;
+    let th = calc.bottom - calc.top;
+    let pad = 8;
+    let bx = anchor.right + 6;
+    let bh = th + pad * 2;
+    // Anchor beside the icon, but shift up so the bubble never spills below the
+    // window (matters for the bottom-most column's tooltip).
+    let by = (anchor.top - 4).min(WIN_H - 8 - bh).max(8);
+    let bubble = RECT {
+        left: bx,
+        top: by,
+        right: bx + tw + pad * 2,
+        bottom: by + bh,
+    };
+    let tip_bg = if app.is_dark {
+        0x0045_4545u32
+    } else {
+        0x00FF_FFFFu32
+    };
+    card_round(hdc, &bubble, 6, tip_bg, p.subtext, 1);
+    SetTextColor(hdc, COLORREF(p.text));
+    let mut tr = RECT {
+        left: bx + pad,
+        top: by + pad,
+        right: bx + pad + tw,
+        bottom: by + pad + th,
+    };
+    DrawTextW(hdc, &mut v, &mut tr, DT_WORDBREAK);
+}
+
 unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
     if app_ptr.is_null() {
         return;
@@ -386,6 +483,7 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
     fill_rect(hdc, &rc, p.card_bg);
     SetBkMode(hdc, TRANSPARENT);
     app.settings_hit.clear();
+    app.settings_info_hit.clear();
 
     // Heading.
     SelectObject(hdc, HGDIOBJ(app.font_title.0));
@@ -462,23 +560,28 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
     );
 
     section(hdc, app, "COLUMNS  (Name and Size always shown)", 396);
-    let cols = [
-        ("% of parent", 1),
-        ("Own size", 3),
-        ("Files", 4),
-        ("Folders", 5),
-        ("Modified", 6),
-    ];
     let mut cy = 424;
-    for (label, logical) in cols {
+    for (idx, (label, logical, _)) in COLUMN_ROWS.iter().enumerate() {
         row_checkbox(
             hdc,
             app,
             label,
             cy,
-            app.col_visible[logical as usize],
-            A_COL_BASE + logical,
+            app.col_visible[*logical as usize],
+            A_COL_BASE + *logical,
         );
+        // ⓘ info icon (hover shows the description tooltip).
+        let ir = RECT {
+            left: 176,
+            top: cy,
+            right: 200,
+            bottom: cy + 28,
+        };
+        SelectObject(hdc, HGDIOBJ(app.font_icon.0));
+        let hot = app.settings_hover == idx as i32;
+        SetTextColor(hdc, COLORREF(if hot { p.blue } else { p.subtext }));
+        draw_text(hdc, "\u{E946}", &ir, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        app.settings_info_hit.push((ir, idx as i32));
         cy += 32;
     }
 
@@ -497,6 +600,20 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         &frc,
         DT_SINGLELINE | DT_VCENTER | DT_LEFT,
     );
+
+    // Hover tooltip for the info icons, drawn LAST so it sits on top of every
+    // other row (including the footer, which the bottom column's tooltip overlaps).
+    if app.settings_hover >= 0 {
+        if let Some((ir, _)) = app
+            .settings_info_hit
+            .iter()
+            .find(|(_, i)| *i == app.settings_hover)
+            .copied()
+        {
+            let desc = COLUMN_ROWS[app.settings_hover as usize].2;
+            draw_tooltip(hdc, app, ir, desc);
+        }
+    }
 
     let _ = EndPaint(hwnd, &ps);
 }
@@ -591,6 +708,43 @@ unsafe extern "system" fn settings_proc(
                         apply_action(hwnd, &mut *app_ptr, action);
                         break;
                     }
+                }
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            if !app_ptr.is_null() {
+                let app = &mut *app_ptr;
+                let x = (lparam.0 & 0xFFFF) as i16 as i32;
+                let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+                let mut hover = -1;
+                for (r, idx) in &app.settings_info_hit {
+                    if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+                        hover = *idx;
+                        break;
+                    }
+                }
+                if hover != app.settings_hover {
+                    app.settings_hover = hover;
+                    let _ = InvalidateRect(hwnd, None, false);
+                }
+                // Ask for a WM_MOUSELEAVE so the tooltip clears when the mouse exits.
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                let _ = TrackMouseEvent(&mut tme);
+            }
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            if !app_ptr.is_null() {
+                let app = &mut *app_ptr;
+                if app.settings_hover != -1 {
+                    app.settings_hover = -1;
+                    let _ = InvalidateRect(hwnd, None, false);
                 }
             }
             LRESULT(0)
