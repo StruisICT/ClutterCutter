@@ -92,10 +92,21 @@ pub(crate) unsafe fn draw_pill_aa(
         bottom: ph * S,
     };
     fill_rect(mem, &full, bar_bg);
-    // Track, then the knob on top (its corners blend into the track fill).
+    // Track, then the knob on top (its corners blend into the track fill). Inset
+    // the track by half the (scaled) pen width so the whole stroke stays inside
+    // the bitmap — otherwise RoundRect's border, which straddles the rectangle
+    // edge, gets its outer half clipped by the bitmap boundary and the white line
+    // ends up thin/uneven, worst at the corners.
+    let hp = (border_w * S) / 2;
+    let track = RECT {
+        left: hp,
+        top: hp,
+        right: pw * S - hp,
+        bottom: ph * S - hp,
+    };
     card_round(
         mem,
-        &full,
+        &track,
         pill_r * S,
         track_fill,
         border,
