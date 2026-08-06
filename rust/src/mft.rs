@@ -137,6 +137,15 @@ impl MftScanner {
         //    by FRN. The FRN is exactly the record's ordinal position, so a Vec
         //    (no hashing) suffices and parsing splits cleanly across cores.
         let n_records = (vd.MftValidDataLength as i64 / record_size as i64).max(0) as usize;
+        // Guard against a corrupt/hostile volume reporting an absurd MFT size,
+        // which would otherwise force a multi-hundred-GB allocation (OOM abort).
+        // 256M records dwarfs any real volume; bail to the walker fallback instead.
+        const MAX_MFT_RECORDS: usize = 256 * 1024 * 1024;
+        if n_records > MAX_MFT_RECORDS {
+            return Err(format!(
+                "MFT reports {n_records} records — implausibly large, using walker instead"
+            ));
+        }
         let mut entries: Vec<Option<MftEntry>> = Vec::new();
         entries.resize_with(n_records, || None);
         let mut frn_cursor: usize = 0;
@@ -341,7 +350,9 @@ fn parse_chunk_parallel(
 // records or ones with no name). Pure — no shared state, so it runs on any
 // thread. `off` is relative to `buf`.
 fn parse_record(buf: &[u8], off: usize, rec_size: usize) -> Option<MftEntry> {
-    if off + rec_size > buf.len() {
+    // The fixed header fields we read live within the first 42 bytes; a record
+    // smaller than that (or one that runs past the buffer) is malformed.
+    if rec_size < 42 || off + rec_size > buf.len() {
         return None;
     }
     if &buf[off..off + 4] != b"FILE" {
@@ -367,7 +378,10 @@ fn parse_record(buf: &[u8], off: usize, rec_size: usize) -> Option<MftEntry> {
     let mut last_write_ft: i64 = 0;
     let mut is_reparse = false;
 
-    while p + 16 < rec_end {
+    // Require a full 24-byte resident attribute header before reading any of its
+    // fields (value-length at p+16, value-offset at p+20). The bytes come straight
+    // off disk, so a truncated/crafted attribute must not read past the record.
+    while p + 24 <= rec_end {
         let attr_type = u32_le(buf, p);
         if attr_type == 0xFFFFFFFF {
             break;
@@ -588,9 +602,13 @@ fn apply_fixups(buf: &mut [u8], rec_off: usize, rec_size: usize, sector_size: us
 // ----------------------------------------------------------------------------
 
 fn extract_mft_data_runs(rec: &[u8]) -> Vec<DataRun> {
+    if rec.len() < 42 {
+        return Vec::new();
+    }
     let first_attr = u16_le(rec, 20) as usize;
     let mut p = first_attr;
-    while p + 8 < rec.len() {
+    // p+10 keeps the type/len/flags header reads (up to p+9) in bounds.
+    while p + 10 <= rec.len() {
         let attr_type = u32_le(rec, p);
         if attr_type == 0xFFFFFFFF {
             break;
@@ -599,8 +617,9 @@ fn extract_mft_data_runs(rec: &[u8]) -> Vec<DataRun> {
         if alen == 0 || p + alen > rec.len() {
             break;
         }
-        // Non-resident (buf[p+8]==1) unnamed (buf[p+9]==0) $DATA (type 0x80)
-        if attr_type == 0x80 && rec[p + 8] == 1 && rec[p + 9] == 0 {
+        // Non-resident (buf[p+8]==1) unnamed (buf[p+9]==0) $DATA (type 0x80). The
+        // run-list offset lives at p+32, so require the non-resident header too.
+        if attr_type == 0x80 && rec[p + 8] == 1 && rec[p + 9] == 0 && p + 34 <= rec.len() {
             let run_offset = u16_le(rec, p + 32) as usize;
             return parse_data_runs(rec, p + run_offset, p + alen);
         }
@@ -621,7 +640,9 @@ fn parse_data_runs(buf: &[u8], start: usize, end: usize) -> Vec<DataRun> {
         }
         let len_bytes = (header & 0x0F) as usize;
         let off_bytes = ((header >> 4) & 0x0F) as usize;
-        if len_bytes == 0 {
+        // NTFS never encodes a run field wider than 8 bytes; a larger nibble is
+        // corrupt and would make read_signed_le shift by >= 64 (UB-ish / garbage).
+        if len_bytes == 0 || len_bytes > 8 {
             break;
         }
         if p + len_bytes > end {
@@ -633,7 +654,7 @@ fn parse_data_runs(buf: &[u8], start: usize, end: usize) -> Vec<DataRun> {
             // sparse run — skip
             continue;
         }
-        if p + off_bytes > end {
+        if off_bytes > 8 || p + off_bytes > end {
             break;
         }
         let offset = read_signed_le(buf, p, off_bytes);
@@ -823,6 +844,51 @@ mod tests {
         let runs = parse_data_runs(&buf, 0, buf.len());
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].length, 2);
+    }
+
+    #[test]
+    fn parse_data_runs_rejects_oversized_run_fields() {
+        // A header nibble > 8 (here len=0x0A) is corrupt; the decoder must bail
+        // rather than shift by >= 64 in read_signed_le.
+        let buf = [0x2Au8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        let runs = parse_data_runs(&buf, 0, buf.len());
+        assert!(runs.is_empty());
+    }
+
+    #[test]
+    fn parse_record_never_panics_on_truncated_resident_attr() {
+        // A valid FILE header with a resident $STANDARD_INFORMATION attribute whose
+        // value-offset points near the record end. Parsing at every truncation
+        // length must never read past the record (pre-hardening this aborted when
+        // the value-offset field itself fell outside the record).
+        let mut rec = vec![0u8; 96];
+        rec[0..4].copy_from_slice(b"FILE");
+        rec[20..22].copy_from_slice(&56u16.to_le_bytes()); // first attribute at 56
+        rec[22] = 0x01; // in-use
+        let a = 56;
+        rec[a..a + 4].copy_from_slice(&0x10u32.to_le_bytes()); // $STANDARD_INFORMATION
+        rec[a + 4..a + 8].copy_from_slice(&8u32.to_le_bytes()); // deliberately tiny alen
+        rec[a + 20..a + 22].copy_from_slice(&24u16.to_le_bytes()); // value offset
+        for n in 42..=96 {
+            let _ = parse_record(&rec[..n], 0, n); // must not panic for any n
+        }
+    }
+
+    #[test]
+    fn extract_mft_data_runs_never_panics_on_truncated_data_attr() {
+        // A non-resident $DATA attribute header near the record end; every
+        // truncation must be handled without reading past the record.
+        let mut rec = vec![0u8; 96];
+        rec[20..22].copy_from_slice(&40u16.to_le_bytes()); // first attribute at 40
+        let a = 40;
+        rec[a..a + 4].copy_from_slice(&0x80u32.to_le_bytes()); // $DATA
+        rec[a + 4..a + 8].copy_from_slice(&8u32.to_le_bytes()); // deliberately tiny alen
+        rec[a + 8] = 1; // non-resident
+        rec[a + 9] = 0; // unnamed
+        rec[a + 32..a + 34].copy_from_slice(&48u16.to_le_bytes()); // run-list offset
+        for n in 42..=96 {
+            let _ = extract_mft_data_runs(&rec[..n]); // must not panic
+        }
     }
 
     #[test]
