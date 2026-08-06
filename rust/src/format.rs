@@ -1,6 +1,22 @@
 // Pure, Win32-free formatting helpers shared by the GUI and CLI. Kept in their
 // own module so they can be unit-tested without a window/message loop.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// Global unit mode read by format_bytes, so the Settings toggle doesn't have to
+// be threaded through the dozens of call sites. Default true = binary (1024).
+static BINARY_UNITS: AtomicBool = AtomicBool::new(true);
+
+/// Switch byte formatting between binary (1024) and decimal (1000) divisors.
+pub fn set_binary_units(binary: bool) {
+    BINARY_UNITS.store(binary, Ordering::Relaxed);
+}
+
+/// Whether byte formatting currently uses binary (1024) units.
+pub fn binary_units() -> bool {
+    BINARY_UNITS.load(Ordering::Relaxed)
+}
+
 /// Join a directory and a leaf name with a single backslash, tolerating a
 /// directory that already ends in one (e.g. a drive root `C:\`).
 pub fn join_path(dir: &str, leaf: &str) -> String {
@@ -15,14 +31,16 @@ pub fn join_path(dir: &str, leaf: &str) -> String {
 /// decimals as the value grows (so it stays ~3-4 significant digits wide).
 /// Binary (1024) units, matching Explorer/TreeSize conventions.
 pub fn format_bytes(n: i64) -> String {
-    if n < 1024 {
+    let base = if binary_units() { 1024.0 } else { 1000.0 };
+    let threshold = base as i64;
+    if n < threshold {
         return format!("{n} B");
     }
-    let mut v = n as f64 / 1024.0;
+    let mut v = n as f64 / base;
     let units = ["KB", "MB", "GB", "TB", "PB"];
     let mut i = 0;
-    while v >= 1024.0 && i < units.len() - 1 {
-        v /= 1024.0;
+    while v >= base && i < units.len() - 1 {
+        v /= base;
         i += 1;
     }
     if v >= 100.0 {
