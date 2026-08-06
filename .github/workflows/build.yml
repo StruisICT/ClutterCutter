@@ -34,6 +34,11 @@ jobs:
   # formatting/lint/test regression fails fast and visibly.
   rust-checks:
     name: Rust checks (fmt, clippy, test)
+    # Skip on release-please's own PR: it only bumps the version/changelog, is
+    # merged by a maintainer, and otherwise sits as an "action_required" run on
+    # every push to main (needless email noise). A skipped required check still
+    # counts as passing, so the release PR stays mergeable.
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: windows-latest
     defaults:
       run:
@@ -58,6 +63,9 @@ jobs:
 
   build:
     name: Build (Windows)
+    # See rust-checks: skip on release-please's own PR to avoid the recurring
+    # "action_required" run + email on every push to main.
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
