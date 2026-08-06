@@ -40,6 +40,7 @@ pub(crate) struct Settings {
     pub scan_on_launch: bool,
     pub confirm_recycle: bool,
     pub show_sidebar: bool,
+    pub col_visible: [bool; 7],
 }
 
 impl Default for Settings {
@@ -52,6 +53,7 @@ impl Default for Settings {
             scan_on_launch: true,
             confirm_recycle: true,
             show_sidebar: true,
+            col_visible: [true; 7],
         }
     }
 }
@@ -97,6 +99,15 @@ pub(crate) fn load() -> Settings {
             "scan_on_launch" => s.scan_on_launch = v != "0",
             "confirm_recycle" => s.confirm_recycle = v != "0",
             "show_sidebar" => s.show_sidebar = v != "0",
+            "cols" => {
+                // 7-char bitmask, one per logical column.
+                for (i, ch) in v.chars().take(7).enumerate() {
+                    s.col_visible[i] = ch != '0';
+                }
+                for &c in &super::ALWAYS_SHOWN_COLS {
+                    s.col_visible[c] = true;
+                }
+            }
             _ => {}
         }
     }
@@ -119,8 +130,13 @@ pub(crate) fn save(s: &Settings) {
         SideView::TempFiles => "temp",
         SideView::None => "none",
     };
+    let cols: String = s
+        .col_visible
+        .iter()
+        .map(|&b| if b { '1' } else { '0' })
+        .collect();
     let text = format!(
-        "theme={theme}\nunits={}\nside={side}\nscan_on_launch={}\nconfirm_recycle={}\nshow_sidebar={}\n",
+        "theme={theme}\nunits={}\nside={side}\nscan_on_launch={}\nconfirm_recycle={}\nshow_sidebar={}\ncols={cols}\n",
         if s.units_binary { "binary" } else { "decimal" },
         s.scan_on_launch as i32,
         s.confirm_recycle as i32,
@@ -138,6 +154,7 @@ pub(crate) fn save_from(app: &AppState) {
         scan_on_launch: app.scan_on_launch,
         confirm_recycle: app.confirm_recycle,
         show_sidebar: app.show_sidebar,
+        col_visible: app.col_visible,
     });
 }
 
@@ -158,9 +175,11 @@ const A_SIDE_NONE: i32 = 33;
 const A_TOG_SCAN: i32 = 40;
 const A_TOG_CONFIRM: i32 = 41;
 const A_TOG_SIDEBAR: i32 = 42;
+// Column-visibility toggles carry the logical column id (1,3,4,5,6) as 100 + id.
+const A_COL_BASE: i32 = 100;
 
 const WIN_W: i32 = 460;
-const WIN_H: i32 = 440;
+const WIN_H: i32 = 636;
 
 pub(crate) unsafe fn show_settings(parent: HWND, app: &mut AppState) {
     let hinstance = GetModuleHandleW(None).expect("hinst");
@@ -442,6 +461,27 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         A_TOG_SIDEBAR,
     );
 
+    section(hdc, app, "COLUMNS  (Name and Size always shown)", 396);
+    let cols = [
+        ("% of parent", 1),
+        ("Own size", 3),
+        ("Files", 4),
+        ("Folders", 5),
+        ("Modified", 6),
+    ];
+    let mut cy = 424;
+    for (label, logical) in cols {
+        row_checkbox(
+            hdc,
+            app,
+            label,
+            cy,
+            app.col_visible[logical as usize],
+            A_COL_BASE + logical,
+        );
+        cy += 32;
+    }
+
     // Footer hint.
     SelectObject(hdc, HGDIOBJ(app.font_small.0));
     SetTextColor(hdc, COLORREF(p.subtext));
@@ -483,6 +523,15 @@ unsafe fn apply_action(hwnd: HWND, app: &mut AppState, action: i32) {
             app.show_sidebar = !app.show_sidebar;
             layout(main, app);
             let _ = InvalidateRect(main, None, true);
+        }
+        a if a >= A_COL_BASE => {
+            let logical = (a - A_COL_BASE) as usize;
+            if logical < 7 && !super::ALWAYS_SHOWN_COLS.contains(&logical) {
+                app.col_visible[logical] = !app.col_visible[logical];
+                super::rebuild_columns(app);
+            } else {
+                return;
+            }
         }
         _ => return,
     }
