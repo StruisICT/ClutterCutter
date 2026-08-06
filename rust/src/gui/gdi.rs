@@ -57,6 +57,78 @@ pub(crate) unsafe fn card_round(
     let _ = DeleteObject(pen);
 }
 
+/// Draw the theme-toggle pill — a rounded track with a rounded sliding knob —
+/// with smooth, anti-aliased edges. GDI's RoundRect has no anti-aliasing, so the
+/// corners stair-step; instead we render the shapes into an offscreen bitmap at
+/// 4x and shrink them back with HALFTONE, which gives clean, polished edges.
+/// Glyphs are drawn by the caller at 1x afterwards (text stays crisp that way).
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn draw_pill_aa(
+    hdc: HDC,
+    pill: &RECT,
+    pill_r: i32,
+    track_fill: u32,
+    border: u32,
+    border_w: i32,
+    knob: &RECT,
+    knob_r: i32,
+    knob_col: u32,
+    bar_bg: u32,
+) {
+    const S: i32 = 4; // supersample factor
+    let pw = pill.right - pill.left;
+    let ph = pill.bottom - pill.top;
+    if pw <= 0 || ph <= 0 {
+        return;
+    }
+    let mem = CreateCompatibleDC(hdc);
+    let bmp = CreateCompatibleBitmap(hdc, pw * S, ph * S);
+    let obmp = SelectObject(mem, HGDIOBJ(bmp.0));
+    // Seed with the bar background so the pill's outer corners blend into the bar.
+    let full = RECT {
+        left: 0,
+        top: 0,
+        right: pw * S,
+        bottom: ph * S,
+    };
+    fill_rect(mem, &full, bar_bg);
+    // Track, then the knob on top (its corners blend into the track fill).
+    card_round(
+        mem,
+        &full,
+        pill_r * S,
+        track_fill,
+        border,
+        (border_w * S).max(1),
+    );
+    let k = RECT {
+        left: (knob.left - pill.left) * S,
+        top: (knob.top - pill.top) * S,
+        right: (knob.right - pill.left) * S,
+        bottom: (knob.bottom - pill.top) * S,
+    };
+    fill_round(mem, &k, knob_r * S, knob_col);
+    // Shrink back over the pill with smoothing.
+    SetStretchBltMode(hdc, HALFTONE);
+    let _ = SetBrushOrgEx(hdc, 0, 0, None);
+    let _ = StretchBlt(
+        hdc,
+        pill.left,
+        pill.top,
+        pw,
+        ph,
+        mem,
+        0,
+        0,
+        pw * S,
+        ph * S,
+        SRCCOPY,
+    );
+    SelectObject(mem, obmp);
+    let _ = DeleteObject(bmp);
+    let _ = DeleteDC(mem);
+}
+
 /// A small bordered box with a "−" (expanded) or "+" (collapsed) glyph — the
 /// tree expand toggle drawn in the Name column.
 pub(crate) unsafe fn draw_expand_box(
