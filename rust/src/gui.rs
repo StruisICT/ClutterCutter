@@ -444,6 +444,10 @@ struct AppState {
     phys_to_logical: Vec<i32>,
     // Clickable hotspots of the Settings modal: (rect, action id).
     settings_hit: Vec<(RECT, i32)>,
+    // Column info-icon hotspots (rect, descriptor index) and which one the mouse
+    // is currently over (-1 = none) for the hover tooltip.
+    settings_info_hit: Vec<(RECT, i32)>,
+    settings_hover: i32,
 }
 
 #[derive(Copy, Clone)]
@@ -566,6 +570,8 @@ pub fn run() {
             col_visible: settings.col_visible,
             phys_to_logical: compute_phys_to_logical(&settings.col_visible),
             settings_hit: Vec::new(),
+            settings_info_hit: Vec::new(),
+            settings_hover: -1,
         });
         let app_ptr = Box::into_raw(app);
 
