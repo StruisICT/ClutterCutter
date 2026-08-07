@@ -33,6 +33,9 @@ unsafe fn begin_scan_ui(app: &mut AppState, status_text: &str) {
     app.deleted_nodes.clear();
     app.deleted_files.clear();
     app.drive_scan_pct.clear();
+    // A fresh scan invalidates any search results (they point into the old tree).
+    app.search_active = false;
+    let _ = SetWindowTextW(app.search, windows::core::w!(""));
     if app.side_view == SideView::TopFiles || app.side_view == SideView::OldestFiles {
         SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     }
