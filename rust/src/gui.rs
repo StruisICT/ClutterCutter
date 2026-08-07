@@ -56,10 +56,10 @@ use windows::Win32::Foundation::{
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
-    GetSysColorBrush, InvalidateRect, RedrawWindow, SelectObject, SetBkMode, SetTextColor,
-    UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT, DT_CENTER,
-    DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ,
-    PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
+    GetSysColorBrush, InvalidateRect, RedrawWindow, SelectObject, SetBkColor, SetBkMode,
+    SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT,
+    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT,
+    HGDIOBJ, PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -125,6 +125,7 @@ const ID_SPLITTER: u16 = 305;
 const ID_TOPBAR: u16 = 306;
 const ID_SIDEBAR: u16 = 307;
 const ID_CRUMB: u16 = 308;
+const ID_SEARCH: u16 = 309;
 const ID_STATUS: u16 = 400;
 
 // Struis ICT redesign geometry.
@@ -313,6 +314,10 @@ struct AppState {
     topbar: HWND,
     sidebar: HWND,
     crumb: HWND,
+    // Search box in the top bar; when non-empty the main list shows a flat list
+    // of every file/folder in the scan whose name matches (search_active).
+    search: HWND,
+    search_active: bool,
     font_title: HFONT,
     font_small: HFONT,
     // Segoe MDL2 Assets glyphs (folder / file / drive / sun / moon icons).
@@ -516,6 +521,8 @@ pub fn run() {
             topbar: HWND::default(),
             sidebar: HWND::default(),
             crumb: HWND::default(),
+            search: HWND::default(),
+            search_active: false,
             font_title: HFONT::default(),
             font_small: HFONT::default(),
             font_icon: HFONT::default(),
@@ -830,8 +837,25 @@ unsafe extern "system" fn wnd_proc(
             r
         }
         WM_COMMAND => {
-            on_command(hwnd, app, (wparam.0 & 0xFFFF) as u16);
+            let id = (wparam.0 & 0xFFFF) as u16;
+            let notif = ((wparam.0 >> 16) & 0xFFFF) as u16;
+            if id == ID_SEARCH {
+                // EN_CHANGE = 0x0300: the search text changed.
+                if notif == 0x0300 {
+                    run_search(app);
+                }
+            } else {
+                on_command(hwnd, app, id);
+            }
             LRESULT(0)
+        }
+        // WM_CTLCOLOREDIT = 0x0133: theme the search box to match the app.
+        0x0133 => {
+            let hdc = HDC(wparam.0 as _);
+            let p = palette(app.is_dark);
+            SetTextColor(hdc, COLORREF(p.text));
+            SetBkColor(hdc, COLORREF(p.card_bg));
+            LRESULT(app.brush_card.0 as isize)
         }
         WM_NOTIFY => on_notify(hwnd, app, lparam),
         m if m == WM_APP_PROGRESS => {
@@ -1152,6 +1176,24 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
                             if px >= gx && px < gx + TREE_GLYPH_W {
                                 toggle_expand(app, row);
                             }
+                        }
+                    }
+                }
+            }
+            c if c == NM_DBLCLK && app.search_active => {
+                // Double-clicking a search result opens its folder in Explorer.
+                let act = &*(lparam.0 as *const NMITEMACTIVATE);
+                if act.iItem >= 0 {
+                    if let Some(b) = app.list_rows.get(act.iItem as usize) {
+                        let dir = if b.row.is_folder {
+                            b.name.clone()
+                        } else if b.owner != 0 {
+                            (*(b.owner as *const FolderNode)).full_path.clone()
+                        } else {
+                            String::new()
+                        };
+                        if !dir.is_empty() {
+                            open_in_explorer(&dir);
                         }
                     }
                 }
@@ -1953,6 +1995,33 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     .expect("topbar");
     SetWindowLongPtrW(app.topbar, GWLP_USERDATA, app_lp);
 
+    // Search box, sitting on the top bar (created after it, so above it in the
+    // z-order). ES_AUTOHSCROLL = 0x80; positioned by layout().
+    app.search = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        w!("EDIT"),
+        PCWSTR::null(),
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(0x80),
+        0,
+        0,
+        200,
+        24,
+        hwnd,
+        HMENU(ID_SEARCH as isize as _),
+        hinstance,
+        None,
+    )
+    .expect("search box");
+    // WM_SETFONT = 0x0030; EM_SETCUEBANNER = 0x1501 (placeholder text).
+    SendMessageW(
+        app.search,
+        0x0030,
+        WPARAM(app.font_small.0 as usize),
+        LPARAM(1),
+    );
+    let cue = wide("Search all files\u{2026}");
+    SendMessageW(app.search, 0x1501, WPARAM(1), LPARAM(cue.as_ptr() as isize));
+
     let sidebar_class = w!("ClutterCutterDrives");
     RegisterClassExW(&WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -2355,6 +2424,11 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
 
     // Row 0: branded top bar spanning the full width.
     let _ = MoveWindow(app.topbar, 0, 0, rc.right, TOPBAR_H, true);
+    // Search box sits on the bar between the Delete button and the theme pill.
+    let s_h = 24;
+    let s_x = 104;
+    let s_w = (rc.right - s_x - 130).clamp(140, 340);
+    let _ = MoveWindow(app.search, s_x, (TOPBAR_H - s_h) / 2, s_w, s_h, true);
 
     // Row 1: left DRIVES sidebar (hidden if the user turned it off), then the
     // content area (breadcrumb + table + optional side panel).
@@ -2764,6 +2838,149 @@ unsafe fn build_list_rows(
             },
         });
     }
+}
+
+// Walk the whole scan collecting up to `cap` files/folders whose name contains
+// `q` (already lowercased), largest first, as flat rows showing the full path.
+fn build_search_rows(
+    root: &FolderNode,
+    deleted: &HashSet<isize>,
+    deleted_files: &HashSet<isize>,
+    q: &str,
+    cap: usize,
+    out: &mut Vec<BuiltRow>,
+) {
+    struct Hit {
+        is_folder: bool,
+        ptr: isize,
+        owner: isize,
+        size: i64,
+        mtime: i64,
+        path: String,
+    }
+    fn walk(
+        node: &FolderNode,
+        deleted: &HashSet<isize>,
+        deleted_files: &HashSet<isize>,
+        q: &str,
+        hits: &mut Vec<Hit>,
+    ) {
+        for c in &node.children {
+            let cp = c as *const FolderNode as isize;
+            if deleted.contains(&cp) {
+                continue;
+            }
+            if c.name.to_lowercase().contains(q) {
+                hits.push(Hit {
+                    is_folder: true,
+                    ptr: cp,
+                    owner: 0,
+                    size: c.size,
+                    mtime: c.last_modified_ft,
+                    path: c.full_path.clone(),
+                });
+            }
+            walk(c, deleted, deleted_files, q, hits);
+        }
+        let owner = node as *const FolderNode as isize;
+        for f in &node.files {
+            let fp = f as *const FileEntry as isize;
+            if deleted_files.contains(&fp) {
+                continue;
+            }
+            if f.name.to_lowercase().contains(q) {
+                hits.push(Hit {
+                    is_folder: false,
+                    ptr: fp,
+                    owner,
+                    size: f.size,
+                    mtime: f.last_modified_ft,
+                    path: join_path(&node.full_path, &f.name),
+                });
+            }
+        }
+    }
+    let mut hits: Vec<Hit> = Vec::new();
+    walk(root, deleted, deleted_files, q, &mut hits);
+    hits.sort_by_key(|h| std::cmp::Reverse(h.size));
+    hits.truncate(cap);
+    let total = root.size.max(1) as f32;
+    for h in hits {
+        out.push(BuiltRow {
+            lparam: if h.is_folder { h.ptr } else { 0 },
+            file: if h.is_folder { 0 } else { h.ptr },
+            owner: h.owner,
+            name: h.path,
+            subs: [
+                String::new(),
+                format_bytes(h.size),
+                String::new(),
+                String::new(),
+                String::new(),
+                format_filetime(h.mtime),
+            ],
+            row: ListRow {
+                depth: 0,
+                is_folder: h.is_folder,
+                has_children: false,
+                expanded: false,
+                pct: (h.size as f32 / total).clamp(0.0, 1.0),
+            },
+        });
+    }
+}
+
+// Rebuild the main list as flat search results for `query`.
+unsafe fn populate_search(app: &mut AppState, query: &str) {
+    let q = query.to_lowercase();
+    let mut rows = Vec::new();
+    if let Some(root) = app.root_node.as_deref() {
+        build_search_rows(
+            root,
+            &app.deleted_nodes,
+            &app.deleted_files,
+            &q,
+            2000,
+            &mut rows,
+        );
+    }
+    SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+    for (i, b) in rows.iter().enumerate() {
+        let lp = if b.lparam != 0 { b.lparam } else { b.file };
+        insert_row_with_param(app.list, i as i32, &b.name, &b.subs, lp);
+    }
+    let n = rows.len();
+    app.list_rows = rows;
+    let more = if n >= 2000 { "+" } else { "" };
+    set_status(
+        app.status,
+        &format!(
+            "{}{more} match{} for \u{201c}{query}\u{201d}",
+            format_count(n as i64),
+            if n == 1 { "" } else { "es" }
+        ),
+    );
+    let _ = InvalidateRect(app.list, None, false);
+}
+
+// Read the search box; empty query restores the normal folder view.
+unsafe fn run_search(app: &mut AppState) {
+    let mut buf = [0u16; 260];
+    let n = GetWindowTextW(app.search, &mut buf);
+    let query = String::from_utf16_lossy(&buf[..n as usize])
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        if app.search_active {
+            app.search_active = false;
+            if app.selected_node != 0 {
+                populate_list_folders(app, &*(app.selected_node as *const FolderNode));
+            }
+        }
+        return;
+    }
+    app.search_active = true;
+    populate_search(app, &query);
 }
 
 // Flips the expand state of the folder at `row` and rebuilds the list from the
