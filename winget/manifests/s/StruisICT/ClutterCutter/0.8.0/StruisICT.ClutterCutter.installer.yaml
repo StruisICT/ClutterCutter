@@ -1,0 +1,16 @@
+# Created with: scripts/Update-WingetManifest.ps1
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+
+PackageIdentifier: StruisICT.ClutterCutter
+PackageVersion: 0.8.0
+MinimumOSVersion: 10.0.0.0
+InstallerType: portable
+Commands:
+- cluttercutter
+ReleaseDate: 2026-08-07
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/StruisICT/ClutterCutter/releases/download/v0.8.0/ClutterCutter-rust.exe
+  InstallerSha256: FB7149A31611F90EC1570F2B45B07A2D46BCDFD0297D51B71417758D38C814B6
+ManifestType: installer
+ManifestVersion: 1.12.0
