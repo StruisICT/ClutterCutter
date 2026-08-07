@@ -1131,15 +1131,54 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
         id if id >= ID_DRIVE_BASE && !app.scanning => {
             let idx = (id - ID_DRIVE_BASE) as usize;
             if let Some(drive) = app.drives.get(idx).cloned() {
-                let use_mft = drive.is_ntfs && app.is_admin;
                 // Highlight this card as the active drive in the sidebar.
                 app.active_drive = idx as i32;
                 let _ = InvalidateRect(app.sidebar, None, false);
-                start_scan(hwnd, app, drive.root, use_mft);
+                // If this drive was already scanned (the startup "All drives"
+                // overview, or a single-drive scan already rooted here), drill
+                // straight into that cached subtree instead of rescanning it.
+                if let Some(hti) = cached_drive_item(app, &drive.root) {
+                    SendMessageW(
+                        app.tree,
+                        TVM_SELECTITEM,
+                        WPARAM(TVGN_CARET as usize),
+                        LPARAM(hti),
+                    );
+                } else {
+                    let use_mft = drive.is_ntfs && app.is_admin;
+                    start_scan(hwnd, app, drive.root, use_mft);
+                }
             }
         }
         _ => {}
     }
+}
+
+// The tree item to drill into for a sidebar drive click, when that drive's data
+// is already in memory — so clicking a drive reuses the startup scan instead of
+// rescanning. Returns None when there's nothing usable cached (rescan instead).
+unsafe fn cached_drive_item(app: &AppState, root_path: &str) -> Option<isize> {
+    let overview = app.root_node.as_deref()?;
+    if overview.full_path.is_empty() {
+        // The synthetic "All drives" root: drill into the matching drive child,
+        // unless it's a bare placeholder left by a drive that failed/was stopped
+        // mid-scan (no data) — those should still rescan on demand.
+        let child = overview
+            .children
+            .iter()
+            .find(|c| c.full_path == root_path)?;
+        if child.size == 0 && child.file_count == 0 && child.children.is_empty() {
+            return None;
+        }
+        let ptr = child as *const FolderNode as isize;
+        return app.item_by_node.get(&ptr).copied();
+    }
+    // A single-drive scan already rooted at this drive: reselect its root.
+    if overview.full_path == root_path {
+        let ptr = overview as *const FolderNode as isize;
+        return app.item_by_node.get(&ptr).copied();
+    }
+    None
 }
 
 unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
