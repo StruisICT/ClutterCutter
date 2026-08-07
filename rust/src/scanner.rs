@@ -69,6 +69,13 @@ impl Scanner {
         self
     }
 
+    /// Set an expected total byte size so progress can report a real percentage
+    /// (e.g. the drive's used bytes). 0 keeps progress indeterminate.
+    pub fn with_size_hint(mut self, bytes: i64) -> Self {
+        self.total_size_hint = bytes;
+        self
+    }
+
     #[allow(dead_code)] // exposed for the eventual GUI to tune fan-out at runtime
     pub fn with_parallelism(mut self, depth: i32) -> Self {
         self.parallel_top_levels = depth;

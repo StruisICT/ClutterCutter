@@ -32,6 +32,7 @@ unsafe fn begin_scan_ui(app: &mut AppState, status_text: &str) {
     // A fresh scan supersedes any in-place deletions.
     app.deleted_nodes.clear();
     app.deleted_files.clear();
+    app.drive_scan_pct.clear();
     if app.side_view == SideView::TopFiles || app.side_view == SideView::OldestFiles {
         SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     }
@@ -53,10 +54,16 @@ fn make_progress(
     send_hwnd: SendHwnd,
     shared: Arc<Mutex<ScanState>>,
     pending: Arc<AtomicBool>,
+    // Placeholder-node key for per-drive progress bars (0 = single scan, no card).
+    drive_key: isize,
 ) -> ProgressFn {
     Box::new(move |p| {
         if let Ok(mut s) = shared.lock() {
             s.last_progress = p.clone();
+            if drive_key != 0 && p.percent >= 0.0 {
+                s.drive_pct
+                    .insert(drive_key, (p.percent / 100.0).clamp(0.0, 1.0));
+            }
         }
         if pending
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
@@ -74,6 +81,9 @@ fn scan_one(
     use_mft: bool,
     cancel: Arc<AtomicBool>,
     progress: ProgressFn,
+    // Drive used-bytes, so the walker can report a real percentage. The MFT path
+    // has its own byte-accurate progress and ignores this.
+    size_hint: i64,
 ) -> Result<FolderNode, String> {
     if use_mft {
         // Share one progress callback between the MFT attempt and the walker
@@ -104,6 +114,7 @@ fn scan_one(
                     .with_cancel(cancel)
                     .with_progress(p_walk)
                     .with_track_files(true)
+                    .with_size_hint(size_hint)
                     .scan(path)
                     .map_err(|e| e.to_string())
             }
@@ -114,6 +125,7 @@ fn scan_one(
             .with_cancel(cancel)
             .with_progress(progress)
             .with_track_files(true)
+            .with_size_hint(size_hint)
             .scan(path)
             .map_err(|e| e.to_string())
     }
@@ -130,13 +142,20 @@ pub(crate) unsafe fn start_scan(hwnd: HWND, app: &mut AppState, path: String, us
     );
     app.last_scan = Some(ScanRequest::Single(path.clone(), use_mft));
 
+    // Used bytes of this drive, so the walker can report a real percentage.
+    let size_hint = app
+        .drives
+        .iter()
+        .find(|d| d.root == path)
+        .map(|d| (d.total_bytes.saturating_sub(d.free_bytes)) as i64)
+        .unwrap_or(0);
     let send_hwnd = SendHwnd(hwnd.0 as isize);
     let shared = app.shared.clone();
     let cancel = app.cancel.clone();
-    let progress = make_progress(send_hwnd, shared.clone(), app.progress_pending.clone());
+    let progress = make_progress(send_hwnd, shared.clone(), app.progress_pending.clone(), 0);
 
     std::thread::spawn(move || {
-        let result = scan_one(&path, use_mft, cancel, progress);
+        let result = scan_one(&path, use_mft, cancel, progress, size_hint);
         if let Ok(mut s) = shared.lock() {
             s.result = Some(result);
         }
@@ -232,13 +251,34 @@ pub(crate) unsafe fn start_scan_all(hwnd: HWND, app: &mut AppState) {
     SetTimer(hwnd, DRIVE_MARQUEE_TIMER, 60, None);
 
     let send_hwnd = SendHwnd(hwnd.0 as isize);
-    for (path, use_mft) in targets {
+    // Pair each target with its placeholder node pointer (for per-drive progress)
+    // and its used bytes (the walker's percentage hint). targets and drive_ptrs are
+    // built in the same drive order, so they zip directly.
+    let per_drive: Vec<(String, bool, isize, i64)> = targets
+        .iter()
+        .zip(drive_ptrs.iter())
+        .map(|((path, mft), &ptr)| {
+            let used = app
+                .drives
+                .iter()
+                .find(|d| &d.root == path)
+                .map(|d| (d.total_bytes.saturating_sub(d.free_bytes)) as i64)
+                .unwrap_or(0);
+            (path.clone(), *mft, ptr, used)
+        })
+        .collect();
+    for (path, use_mft, drive_key, used) in per_drive {
         let inbox = inbox.clone();
         let cancel = app.cancel.clone();
-        let progress = make_progress(send_hwnd, app.shared.clone(), app.progress_pending.clone());
+        let progress = make_progress(
+            send_hwnd,
+            app.shared.clone(),
+            app.progress_pending.clone(),
+            drive_key,
+        );
         std::thread::spawn(move || {
-            let res =
-                scan_one(&path, use_mft, cancel, progress).map_err(|e| format!("{path}: {e}"));
+            let res = scan_one(&path, use_mft, cancel, progress, used)
+                .map_err(|e| format!("{path}: {e}"));
             if let Ok(mut q) = inbox.lock() {
                 q.push((path, res));
             }
@@ -383,13 +423,15 @@ unsafe fn finish_scan_all(app: &mut AppState) {
     set_status(app.status, &summary);
 }
 
-pub(crate) fn on_progress(app: &AppState) {
+pub(crate) fn on_progress(app: &mut AppState) {
     // Allow the next progress post through now that we're servicing this one.
     app.progress_pending.store(false, Ordering::Release);
-    let p = {
+    let (p, drive_pct) = {
         let s = app.shared.lock().unwrap();
-        s.last_progress.clone()
+        (s.last_progress.clone(), s.drive_pct.clone())
     };
+    // Snapshot per-drive progress for the drive-row fill bars.
+    app.drive_scan_pct = drive_pct;
     let text = if p.percent < 0.0 {
         format!(
             "Scanning... {} files, {}  {}",

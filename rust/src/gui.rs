@@ -217,6 +217,9 @@ struct DriveInfo {
 struct ScanState {
     last_progress: ScanProgress,
     result: Option<Result<FolderNode, String>>,
+    // Per-drive scan progress (placeholder-node ptr -> 0.0..1.0), for the real
+    // progress fill on each drive row during a scan-all.
+    drive_pct: HashMap<isize, f64>,
 }
 
 // What the side panel shows. The tree + selected-folder list are always
@@ -403,6 +406,10 @@ struct AppState {
     pending_drives: std::collections::HashSet<isize>,
     // Advancing counter that animates the indeterminate progress bars.
     marquee_phase: i32,
+    // Per-drive scan progress (0.0..1.0) copied from the shared scan state each
+    // WM_APP_PROGRESS, keyed by the drive's placeholder-node ptr; drives a real
+    // fill bar on each drive row until its scan finishes.
+    drive_scan_pct: HashMap<isize, f64>,
     // Bumped whenever the scan tree is rebuilt or mutated; keys the side-view
     // cache so a stale (wrong-tree) result is never reused.
     tree_version: u64,
@@ -551,6 +558,7 @@ pub fn run() {
             drives_done: 0,
             pending_drives: std::collections::HashSet::new(),
             marquee_phase: 0,
+            drive_scan_pct: HashMap::new(),
             tree_version: 0,
             side_cache: std::collections::HashMap::new(),
             sort_col: load_sort().0,
@@ -1453,8 +1461,8 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
         let bar_h = 8;
         let bar_left = rc.left + 6;
         let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
-        // Drives still being scanned show an indeterminate marquee instead of a
-        // %-of-parent bar, so the user can see work is in progress.
+        // Drives still being scanned show their real scan progress once it's
+        // known, falling back to an indeterminate marquee before the first report.
         if app.pending_drives.contains(&br.lparam) {
             let bar_right = rc.right - 8;
             let track = RECT {
@@ -1465,21 +1473,38 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
             };
             fill_round(hdc, &track, 4, p.track);
             let track_w = bar_right - bar_left;
-            if track_w > 20 {
-                let seg_w = track_w / 3;
-                let span = track_w + seg_w;
-                let pos = (app.marquee_phase * 6).rem_euclid(span) - seg_w;
-                let seg_left = (bar_left + pos).clamp(bar_left, bar_right);
-                let seg_right = (bar_left + pos + seg_w).clamp(bar_left, bar_right);
-                if seg_right > seg_left {
-                    let seg = RECT {
-                        left: seg_left,
-                        top: bar_top,
-                        right: seg_right,
-                        bottom: bar_top + bar_h,
-                    };
-                    fill_round(hdc, &seg, 4, p.blue);
+            match app.drive_scan_pct.get(&br.lparam).copied() {
+                // Determinate fill from the scanner's real percentage.
+                Some(pct) if pct > 0.0 => {
+                    let fill_w = (track_w as f64 * pct.clamp(0.0, 1.0)).round() as i32;
+                    if fill_w >= 4 {
+                        let fill = RECT {
+                            left: bar_left,
+                            top: bar_top,
+                            right: bar_left + fill_w,
+                            bottom: bar_top + bar_h,
+                        };
+                        fill_round(hdc, &fill, 4, p.blue);
+                    }
                 }
+                // No percentage yet: animate an indeterminate marquee segment.
+                _ if track_w > 20 => {
+                    let seg_w = track_w / 3;
+                    let span = track_w + seg_w;
+                    let pos = (app.marquee_phase * 6).rem_euclid(span) - seg_w;
+                    let seg_left = (bar_left + pos).clamp(bar_left, bar_right);
+                    let seg_right = (bar_left + pos + seg_w).clamp(bar_left, bar_right);
+                    if seg_right > seg_left {
+                        let seg = RECT {
+                            left: seg_left,
+                            top: bar_top,
+                            right: seg_right,
+                            bottom: bar_top + bar_h,
+                        };
+                        fill_round(hdc, &seg, 4, p.blue);
+                    }
+                }
+                _ => {}
             }
             return LRESULT(CDRF_SKIPDEFAULT as isize);
         }
