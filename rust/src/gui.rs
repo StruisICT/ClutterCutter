@@ -276,7 +276,10 @@ struct BuiltRow {
     file: isize,   // FileEntry ptr for file rows, 0 for folders
     owner: isize,  // owning FolderNode ptr for file rows (for path + ancestor math)
     name: String,
-    subs: [String; 6],
+    subs: [String; 7],
+    // Free/total bytes of the disk this row lives on, for the FREE bar column.
+    disk_free: i64,
+    disk_total: i64,
     row: ListRow,
 }
 
@@ -453,7 +456,7 @@ struct AppState {
     show_sidebar: bool,
     // Main-list column visibility (logical id 0..6). phys_to_logical maps the
     // physical listview column index (visible columns only) back to the logical id.
-    col_visible: [bool; 7],
+    col_visible: [bool; 8],
     phys_to_logical: Vec<i32>,
     // Clickable hotspots of the Settings modal: (rect, action id).
     settings_hit: Vec<(RECT, i32)>,
@@ -1276,16 +1279,19 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
 // Custom-drawn columns of the main list.
 const NAME_COL: i32 = 0;
 const PCT_COL: i32 = 1;
-const MODIFIED_COL: i32 = 6;
+const FREE_COL: i32 = 2; // disk free-space bar
+const SIZE_COL: i32 = 3;
+const MODIFIED_COL: i32 = 7;
 
 // The seven logical main-list columns: (header, fixed width, right-aligned). Name
 // (0) is the column that stretches to fill; the rest are fixed-width. Any column
 // except Name and Size (2) can be hidden from Settings — visibility is tracked in
 // AppState.col_visible, and phys_to_logical maps a physical listview column index
 // (only the visible ones exist) back to its logical id above.
-const MAIN_COLS: [(&str, i32, bool); 7] = [
+const MAIN_COLS: [(&str, i32, bool); 8] = [
     ("NAME", 320, false),
     ("% OF PARENT", 128, false),
+    ("FREE", 110, false),
     ("SIZE", 90, true),
     ("OWN SIZE", 90, true),
     ("FILES", 80, true),
@@ -1293,10 +1299,10 @@ const MAIN_COLS: [(&str, i32, bool); 7] = [
     ("MODIFIED", 120, false),
 ];
 // Logical columns the user is not allowed to hide.
-const ALWAYS_SHOWN_COLS: [usize; 2] = [0, 2]; // Name, Size
+const ALWAYS_SHOWN_COLS: [usize; 2] = [0, 3]; // Name, Size
 
-fn compute_phys_to_logical(col_visible: &[bool; 7]) -> Vec<i32> {
-    (0..7)
+fn compute_phys_to_logical(col_visible: &[bool; 8]) -> Vec<i32> {
+    (0..8)
         .filter(|&c| col_visible[c])
         .map(|c| c as i32)
         .collect()
@@ -1304,8 +1310,8 @@ fn compute_phys_to_logical(col_visible: &[bool; 7]) -> Vec<i32> {
 
 // Combined fixed width of the visible non-Name columns (drives the Name column's
 // stretch in layout()).
-fn main_fixed_cols_w(col_visible: &[bool; 7]) -> i32 {
-    (1..7)
+fn main_fixed_cols_w(col_visible: &[bool; 8]) -> i32 {
+    (1..8)
         .filter(|&c| col_visible[c])
         .map(|c| MAIN_COLS[c].1)
         .sum()
@@ -1589,10 +1595,57 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
         return LRESULT(CDRF_SKIPDEFAULT as isize);
     }
 
+    // FREE: how much space is free on the disk this row lives on, as a bar (fill =
+    // free fraction) plus the free amount. Same style as the % OF PARENT bar.
+    if sub == FREE_COL {
+        if br.disk_total > 0 {
+            let bar_h = 8;
+            let bar_left = rc.left + 6;
+            let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
+            let text_w = 52;
+            let bar_right = rc.right - text_w - 4;
+            let free_frac = (br.disk_free as f64 / br.disk_total as f64).clamp(0.0, 1.0) as f32;
+            if bar_right - bar_left > 16 {
+                let track = RECT {
+                    left: bar_left,
+                    top: bar_top,
+                    right: bar_right,
+                    bottom: bar_top + bar_h,
+                };
+                fill_round(hdc, &track, 4, if selected { 0x00C8_C8C8 } else { p.track });
+                let fill_w = ((bar_right - bar_left) as f32 * free_frac).round() as i32;
+                if fill_w >= 4 {
+                    let fill = RECT {
+                        left: bar_left,
+                        top: bar_top,
+                        right: bar_left + fill_w,
+                        bottom: bar_top + bar_h,
+                    };
+                    fill_round(hdc, &fill, 4, p.blue);
+                }
+            }
+            let mut txt: Vec<u16> = format_bytes(br.disk_free).encode_utf16().collect();
+            let mut trc = RECT {
+                left: rc.right - text_w - 2,
+                top: rc.top,
+                right: rc.right - 6,
+                bottom: rc.bottom,
+            };
+            SetTextColor(hdc, COLORREF(fg));
+            DrawTextW(
+                hdc,
+                &mut txt,
+                &mut trc,
+                DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
+            );
+        }
+        return LRESULT(CDRF_SKIPDEFAULT as isize);
+    }
+
     // A drive still being scanned has no real numbers yet: show "Scanning…" in
     // the Size column and leave the rest blank.
     if app.pending_drives.contains(&br.lparam) {
-        if sub == 2 {
+        if sub == SIZE_COL {
             let trc = RECT {
                 left: rc.left + 4,
                 top: rc.top,
@@ -2706,24 +2759,35 @@ unsafe fn nav_up(app: &mut AppState) {
 // into any folder whose pointer is in `expanded`. Subfolders first, files last,
 // each group sorted case-insensitively; tombstoned folders are skipped.
 // Numeric sort key for a folder under the given column (Name is handled
-// separately as a string). Columns: 1/2=Size, 3=Own size, 4=Files, 5=Folders,
-// 6=Modified.
+// separately as a string). Columns: 1/2/3 sort by size, 4=Own size, 5=Files,
+// 6=Folders, 7=Modified.
 fn folder_sort_key(n: &FolderNode, col: i32) -> i64 {
     match col {
-        3 => n.own_size,
-        4 => n.file_count,
-        5 => n.folder_count,
-        6 => n.last_modified_ft,
+        4 => n.own_size,
+        5 => n.file_count,
+        6 => n.folder_count,
+        7 => n.last_modified_ft,
         _ => n.size,
     }
 }
 
 fn file_sort_key(f: &FileEntry, col: i32) -> i64 {
     match col {
-        6 => f.last_modified_ft,
-        4 | 5 => 0, // files have no child/folder counts
+        7 => f.last_modified_ft,
+        5 | 6 => 0, // files have no child/folder counts
         _ => f.size,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+// Free/total bytes of the disk `path` lives on, by matching the drive-root prefix.
+fn disk_for(path: &str, drives: &[DriveInfo]) -> (i64, i64) {
+    for d in drives {
+        if path.len() >= d.root.len() && path[..d.root.len()].eq_ignore_ascii_case(&d.root) {
+            return (d.free_bytes as i64, d.total_bytes as i64);
+        }
+    }
+    (0, 0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2731,6 +2795,7 @@ unsafe fn build_list_rows(
     expanded: &HashSet<isize>,
     deleted: &HashSet<isize>,
     deleted_files: &HashSet<isize>,
+    drives: &[DriveInfo],
     node: &FolderNode,
     depth: i32,
     sort_col: i32,
@@ -2761,6 +2826,7 @@ unsafe fn build_list_rows(
         let kp = *k as *const _ as isize;
         let has_children = !k.children.is_empty() || !k.files.is_empty();
         let is_expanded = expanded.contains(&kp);
+        let (df, dt) = disk_for(&k.full_path, drives);
         out.push(BuiltRow {
             lparam: kp,
             file: 0,
@@ -2768,12 +2834,15 @@ unsafe fn build_list_rows(
             name: k.name.clone(),
             subs: [
                 String::new(),
+                String::new(),
                 format_bytes(k.size),
                 format_bytes(k.own_size),
                 format_count(k.file_count),
                 format_count(k.folder_count),
                 format_filetime(k.last_modified_ft),
             ],
+            disk_free: df,
+            disk_total: dt,
             row: ListRow {
                 depth,
                 is_folder: true,
@@ -2787,6 +2856,7 @@ unsafe fn build_list_rows(
                 expanded,
                 deleted,
                 deleted_files,
+                drives,
                 k,
                 depth + 1,
                 sort_col,
@@ -2795,6 +2865,7 @@ unsafe fn build_list_rows(
             );
         }
     }
+    let (node_df, node_dt) = disk_for(&node.full_path, drives);
     let mut files: Vec<&FileEntry> = node.files.iter().collect();
     files.sort_by(|a, b| {
         let ord = if sort_col == 0 {
@@ -2823,12 +2894,15 @@ unsafe fn build_list_rows(
             name: f.name.clone(),
             subs: [
                 String::new(),
+                String::new(),
                 format_bytes(f.size),
                 String::new(),
                 String::new(),
                 String::new(),
                 format_filetime(f.last_modified_ft),
             ],
+            disk_free: node_df,
+            disk_total: node_dt,
             row: ListRow {
                 depth,
                 is_folder: false,
@@ -2846,6 +2920,7 @@ fn build_search_rows(
     root: &FolderNode,
     deleted: &HashSet<isize>,
     deleted_files: &HashSet<isize>,
+    drives: &[DriveInfo],
     q: &str,
     cap: usize,
     out: &mut Vec<BuiltRow>,
@@ -2906,6 +2981,7 @@ fn build_search_rows(
     hits.truncate(cap);
     let total = root.size.max(1) as f32;
     for h in hits {
+        let (df, dt) = disk_for(&h.path, drives);
         out.push(BuiltRow {
             lparam: if h.is_folder { h.ptr } else { 0 },
             file: if h.is_folder { 0 } else { h.ptr },
@@ -2913,12 +2989,15 @@ fn build_search_rows(
             name: h.path,
             subs: [
                 String::new(),
+                String::new(),
                 format_bytes(h.size),
                 String::new(),
                 String::new(),
                 String::new(),
                 format_filetime(h.mtime),
             ],
+            disk_free: df,
+            disk_total: dt,
             row: ListRow {
                 depth: 0,
                 is_folder: h.is_folder,
@@ -2939,6 +3018,7 @@ unsafe fn populate_search(app: &mut AppState, query: &str) {
             root,
             &app.deleted_nodes,
             &app.deleted_files,
+            &app.drives,
             &q,
             2000,
             &mut rows,
@@ -3026,6 +3106,7 @@ unsafe fn populate_list_folders(app: &mut AppState, node: &FolderNode) {
         &app.expanded,
         &app.deleted_nodes,
         &app.deleted_files,
+        &app.drives,
         node,
         0,
         app.sort_col,
