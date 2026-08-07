@@ -47,7 +47,7 @@ pub(crate) struct Settings {
     pub scan_on_launch: bool,
     pub confirm_recycle: bool,
     pub show_sidebar: bool,
-    pub col_visible: [bool; 7],
+    pub col_visible: [bool; 8],
 }
 
 impl Default for Settings {
@@ -60,7 +60,7 @@ impl Default for Settings {
             scan_on_launch: true,
             confirm_recycle: true,
             show_sidebar: true,
-            col_visible: [true; 7],
+            col_visible: [true; 8],
         }
     }
 }
@@ -107,9 +107,13 @@ pub(crate) fn load() -> Settings {
             "confirm_recycle" => s.confirm_recycle = v != "0",
             "show_sidebar" => s.show_sidebar = v != "0",
             "cols" => {
-                // 7-char bitmask, one per logical column.
-                for (i, ch) in v.chars().take(7).enumerate() {
-                    s.col_visible[i] = ch != '0';
+                // 8-char bitmask, one per logical column. Ignore anything of the
+                // wrong length (e.g. a pre-FREE-column config) and keep defaults.
+                let chars: Vec<char> = v.chars().collect();
+                if chars.len() == s.col_visible.len() {
+                    for (i, ch) in chars.iter().enumerate() {
+                        s.col_visible[i] = *ch != '0';
+                    }
                 }
                 for &c in &super::ALWAYS_SHOWN_COLS {
                     s.col_visible[c] = true;
@@ -187,36 +191,41 @@ const A_COL_BASE: i32 = 100;
 
 // The hideable columns, in display order: (label, logical id, ⓘ description). The
 // description shows in a hover tooltip on the info icon.
-const COLUMN_ROWS: [(&str, i32, &str); 5] = [
+const COLUMN_ROWS: [(&str, i32, &str); 6] = [
     (
         "% of parent",
         1,
         "How much of the parent folder's size this item takes up, shown as a bar and percentage.",
     ),
     (
+        "Free space",
+        2,
+        "Free space left on the disk this item lives on, shown as a bar and amount.",
+    ),
+    (
         "Own size",
-        3,
+        4,
         "Size of the files directly in this folder only, excluding everything in its subfolders.",
     ),
     (
         "Files",
-        4,
+        5,
         "Total number of files inside this folder, counting all of its subfolders.",
     ),
     (
         "Folders",
-        5,
+        6,
         "Total number of subfolders inside this folder, counting all nested levels.",
     ),
     (
         "Modified",
-        6,
+        7,
         "The date this folder's contents were most recently changed.",
     ),
 ];
 
 const WIN_W: i32 = 460;
-const WIN_H: i32 = 636;
+const WIN_H: i32 = 676;
 
 pub(crate) unsafe fn show_settings(parent: HWND, app: &mut AppState) {
     let hinstance = GetModuleHandleW(None).expect("hinst");
