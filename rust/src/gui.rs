@@ -4103,24 +4103,37 @@ unsafe fn run_system_action(hwnd: HWND, app: &mut AppState, action: SysAction) {
             let _ = SHEmptyRecycleBinW(hwnd, PCWSTR::null(), 0);
             set_status(app.status, "Opened Windows' Recycle Bin empty dialog.");
         }
-        SysAction::OpenSystemProtection => launch_tool("SystemPropertiesProtection.exe"),
+        SysAction::OpenSystemProtection => {
+            // System Restore / System Protection only exists on client Windows.
+            // On Server SKUs SystemPropertiesProtection.exe just exits, so guide
+            // the user to the tools that do manage shadow storage there.
+            if is_server_sku() {
+                info_box(
+                    hwnd,
+                    "Restore points & shadow copies",
+                    "On Windows Server, System Restore isn't available. Manage the \
+                     Volume Shadow Copies using this space via:\n\n\
+                     \u{2022} This PC \u{2192} right-click the drive \u{2192} Properties \u{2192} \
+                     Shadow Copies tab \u{2192} Settings, to cap the size or disable it.\n\n\
+                     \u{2022} Or an elevated Command Prompt:\n\
+                     \u{20}    vssadmin list shadowstorage\n\
+                     \u{20}    vssadmin resize shadowstorage /for=C: /on=C: /maxsize=10GB\n\
+                     \u{20}    vssadmin delete shadows /for=C: /oldest",
+                );
+            } else {
+                launch_tool("SystemPropertiesProtection.exe");
+            }
+        }
         SysAction::OpenDiskCleanup => launch_tool("cleanmgr.exe"),
         SysAction::OpenVirtualMemory => launch_tool("SystemPropertiesPerformance.exe"),
-        SysAction::HibernateInfo => {
-            let body = wide(
-                "To remove hiberfil.sys, open an elevated Command Prompt \
-                 (Run as administrator) and run:\n\n    powercfg /hibernate off\n\n\
-                 This also disables Fast Startup. To re-enable it later:\n\n    \
-                 powercfg /hibernate on",
-            );
-            let title = wide("Hibernation file");
-            MessageBoxW(
-                hwnd,
-                PCWSTR(body.as_ptr()),
-                PCWSTR(title.as_ptr()),
-                MB_OK | MB_ICONINFORMATION,
-            );
-        }
+        SysAction::HibernateInfo => info_box(
+            hwnd,
+            "Hibernation file",
+            "To remove hiberfil.sys, open an elevated Command Prompt \
+             (Run as administrator) and run:\n\n    powercfg /hibernate off\n\n\
+             This also disables Fast Startup. To re-enable it later:\n\n    \
+             powercfg /hibernate on",
+        ),
     }
 }
 
@@ -4128,6 +4141,55 @@ unsafe fn run_system_action(hwnd: HWND, app: &mut AppState, action: SysAction) {
 // itself via UAC if it needs to; nothing here runs elevated on its own.
 fn launch_tool(exe: &str) {
     unsafe { shell_exec("open", exe, None, None) };
+}
+
+// A simple informational message box.
+unsafe fn info_box(hwnd: HWND, title: &str, body: &str) {
+    let t = wide(title);
+    let b = wide(body);
+    MessageBoxW(
+        hwnd,
+        PCWSTR(b.as_ptr()),
+        PCWSTR(t.as_ptr()),
+        MB_OK | MB_ICONINFORMATION,
+    );
+}
+
+// True on Windows Server SKUs (InstallationType != "Client"), where System
+// Restore / System Protection is absent. Best-effort; defaults to client.
+fn is_server_sku() -> bool {
+    read_hklm_sz(
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+        "InstallationType",
+    )
+    .map(|s| !s.eq_ignore_ascii_case("Client"))
+    .unwrap_or(false)
+}
+
+// Read a REG_SZ value under HKLM. Returns None on any failure.
+fn read_hklm_sz(subkey: &str, value: &str) -> Option<String> {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+    let sub = wide(subkey);
+    let val = wide(value);
+    let mut buf = [0u16; 64];
+    let mut len = std::mem::size_of_val(&buf) as u32;
+    let rc = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(sub.as_ptr()),
+            PCWSTR(val.as_ptr()),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buf.as_mut_ptr() as *mut std::ffi::c_void),
+            Some(&mut len),
+        )
+    };
+    if rc.is_ok() {
+        let n = (len as usize / 2).saturating_sub(1); // drop the trailing NUL
+        Some(String::from_utf16_lossy(&buf[..n.min(buf.len())]))
+    } else {
+        None
+    }
 }
 
 // ---- Side panel ----
