@@ -80,13 +80,14 @@ use windows::Win32::UI::Controls::{
     ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVIR_BOUNDS, LVM_DELETEALLITEMS,
     LVM_DELETECOLUMN, LVM_GETHEADER, LVM_GETITEMRECT, LVM_GETTOPINDEX, LVM_SCROLL,
     LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVN_COLUMNCLICK,
-    LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT,
-    LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE, NMLISTVIEW, NMLVCUSTOMDRAW, NM_CLICK,
-    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET,
-    TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
-    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
-    TVM_SETITEMW, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
-    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    LVN_GETINFOTIPW, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_EX_INFOTIP,
+    LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE,
+    NMLISTVIEW, NMLVCUSTOMDRAW, NMLVGETINFOTIPW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK,
+    ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN,
+    TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND,
+    TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETITEMW,
+    TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
+    TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus};
 use windows::Win32::UI::Shell::{
@@ -1307,10 +1308,93 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
                 app.ctx_target = CtxTarget::SideList;
                 show_context_menu(hwnd, app);
             }
+            c if c == LVN_GETINFOTIPW => {
+                fill_side_infotip(app, lparam.0 as *mut NMLVGETINFOTIPW);
+            }
             _ => {}
         }
     }
     LRESULT(0)
+}
+
+// Decode a NUL-terminated UTF-16 buffer (as returned by side_subitem_text) to a
+// String, stopping at the first NUL.
+fn u16_to_string(buf: &[u16]) -> String {
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..end])
+}
+
+// Supply the hover tooltip for a side-list row. We only add text for entries that
+// live in a protected system location (shadow copies, NTFS metadata, the page
+// file, WinSxS…) — big things a user might be tempted to delete but shouldn't.
+// Everything else gets an empty tip (no popup).
+unsafe fn fill_side_infotip(app: &AppState, tip: *mut NMLVGETINFOTIPW) {
+    let tip = &mut *tip;
+    if tip.iItem < 0 || tip.pszText.is_null() || tip.cchTextMax <= 1 {
+        return;
+    }
+    let path_col = if app.side_view == SideView::TempFiles {
+        4
+    } else {
+        3
+    };
+    let row = tip.iItem as u32 as usize;
+    let folder = u16_to_string(&side_subitem_text(app.side_list, row, path_col));
+    let file = u16_to_string(&side_subitem_text(app.side_list, row, 0));
+    let note = protected_note(&folder, &file).unwrap_or("");
+    // Copy into the caller's buffer (UTF-16, always NUL-terminated). An empty
+    // string suppresses the tooltip for ordinary files.
+    let mut wide: Vec<u16> = note.encode_utf16().collect();
+    wide.truncate((tip.cchTextMax as usize).saturating_sub(1));
+    wide.push(0);
+    std::ptr::copy_nonoverlapping(wide.as_ptr(), tip.pszText.0, wide.len());
+}
+
+// If `folder`/`file` name a protected Windows location, return a short note
+// explaining what it is and that it shouldn't be hand-deleted. Case-insensitive.
+fn protected_note(folder: &str, file: &str) -> Option<&'static str> {
+    let f = folder.to_ascii_lowercase();
+    let name = file.to_ascii_lowercase();
+    if f.contains("system volume information") {
+        return Some(
+            "System Volume Information — protected Windows data: System Restore points and \
+             Volume Shadow Copies (\"previous versions\"). Don't delete these directly; if you \
+             need the space, trim them via System Protection or Disk Cleanup → System Restore.",
+        );
+    }
+    if f.contains("$recycle.bin") {
+        return Some(
+            "Recycle Bin storage — deleted files still recoverable. Empty the Recycle Bin to \
+             reclaim this space instead of deleting the folder.",
+        );
+    }
+    if f.contains("\\winsxs") {
+        return Some(
+            "WinSxS (Windows component store) — servicing files, largely hard-linked so the real \
+             size is smaller than shown. Never delete manually; clean via \
+             \"Dism /Online /Cleanup-Image /StartComponentCleanup\".",
+        );
+    }
+    if f.contains("\\$extend") || name.starts_with("$mft") || name.starts_with("$log") {
+        return Some(
+            "NTFS metadata — internal filesystem structures the volume needs to function. \
+             These can't and shouldn't be deleted.",
+        );
+    }
+    match name.as_str() {
+        "pagefile.sys" => Some(
+            "Windows page file (virtual memory). Don't delete; resize it via System Properties → \
+             Advanced → Performance → Virtual memory if needed.",
+        ),
+        "hiberfil.sys" => Some(
+            "Hibernation file (holds RAM for hibernate/fast startup). Remove only via \
+             \"powercfg /hibernate off\", not by deleting the file.",
+        ),
+        "swapfile.sys" => {
+            Some("Windows swap file for modern (Store) apps. Managed by Windows; don't delete it.")
+        }
+        _ => None,
+    }
 }
 
 // Reliable per-row selection test: `nmcd.uItemState` is not dependable at the
@@ -2316,7 +2400,9 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         app.side_list,
         LVM_SETEXTENDEDLISTVIEWSTYLE,
         WPARAM(0),
-        LPARAM(ext),
+        // INFOTIP lets us surface an explanatory hover tooltip on protected
+        // system entries (e.g. System Volume Information shadow copies).
+        LPARAM(ext | LVS_EX_INFOTIP as isize),
     );
     // Same subclass as the main list: force a full repaint after scroll so no
     // sliver of the previous frame (a duplicated card) survives at the top.
