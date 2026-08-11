@@ -58,8 +58,9 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
     GetSysColorBrush, InvalidateRect, RedrawWindow, SelectObject, SetBkColor, SetBkMode,
     SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT,
-    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT,
-    HGDIOBJ, PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
+    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH,
+    HDC, HFONT, HGDIOBJ, PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW,
+    TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -80,19 +81,18 @@ use windows::Win32::UI::Controls::{
     ICC_TREEVIEW_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, LVIR_BOUNDS, LVM_DELETEALLITEMS,
     LVM_DELETECOLUMN, LVM_GETHEADER, LVM_GETITEMRECT, LVM_GETTOPINDEX, LVM_SCROLL,
     LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVN_COLUMNCLICK,
-    LVN_GETINFOTIPW, LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_EX_INFOTIP,
-    LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE,
-    NMLISTVIEW, NMLVCUSTOMDRAW, NMLVGETINFOTIPW, NM_CLICK, NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK,
-    ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET, TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN,
-    TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT, TVM_DELETEITEM, TVM_EXPAND,
-    TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETITEMW,
-    TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
-    TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
+    LVSIL_SMALL, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT,
+    LVS_SHOWSELALWAYS, NMCUSTOMDRAW, NMHDR, NMITEMACTIVATE, NMLISTVIEW, NMLVCUSTOMDRAW, NM_CLICK,
+    NM_CUSTOMDRAW, NM_DBLCLK, NM_RCLICK, ODS_DISABLED, ODS_SELECTED, TVE_EXPAND, TVGN_CARET,
+    TVGN_PARENT, TVGN_ROOT, TVIF_CHILDREN, TVIF_HANDLE, TVIF_PARAM, TVIF_TEXT, TVITEMW, TVI_ROOT,
+    TVM_DELETEITEM, TVM_EXPAND, TVM_GETITEMW, TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SELECTITEM,
+    TVM_SETITEMW, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
+    TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus};
 use windows::Win32::UI::Shell::{
-    DefSubclassProc, IsUserAnAdmin, SHFileOperationW, SetWindowSubclass, ShellExecuteW,
-    FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE, SHFILEOPSTRUCTW,
+    DefSubclassProc, IsUserAnAdmin, SHEmptyRecycleBinW, SHFileOperationW, SetWindowSubclass,
+    ShellExecuteW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE, SHFILEOPSTRUCTW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreateAcceleratorTableW, CreateMenu, CreatePopupMenu,
@@ -103,13 +103,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetMenu, SetParent, SetTimer, SetWindowLongPtrW, SetWindowTextW, ShowWindow, TrackPopupMenu,
     TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW,
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW,
-    IDC_SIZEWE, IDI_APPLICATION, IDYES, IMAGE_ICON, LR_DEFAULTCOLOR, MB_ICONWARNING, MB_YESNO,
-    MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, SM_CXVSCROLL, SW_HIDE, SW_NORMAL,
-    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND,
-    WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE,
-    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW,
-    WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP,
-    WS_VISIBLE,
+    IDC_SIZEWE, IDI_APPLICATION, IDYES, IMAGE_ICON, LR_DEFAULTCOLOR, MB_ICONINFORMATION,
+    MB_ICONWARNING, MB_OK, MB_YESNO, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG,
+    SM_CXVSCROLL, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW,
+    WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE,
+    WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -178,6 +178,7 @@ const ID_MENU_VIEW_NONE: u16 = 5301;
 const ID_MENU_VIEW_TOPFILES: u16 = 5302;
 const ID_MENU_VIEW_OLDEST: u16 = 5303;
 const ID_MENU_VIEW_TEMP: u16 = 5304;
+const ID_MENU_VIEW_SYSTEM: u16 = 5305;
 const ID_MENU_VIEW_DETACH: u16 = 5310;
 
 // Number of files shown in the file-based views (top largest / oldest).
@@ -233,6 +234,7 @@ enum SideView {
     TopFiles,
     OldestFiles,
     TempFiles,
+    System,
 }
 
 impl SideView {
@@ -242,6 +244,7 @@ impl SideView {
             SideView::TopFiles => "Top largest files",
             SideView::OldestFiles => "Oldest files",
             SideView::TempFiles => "Safe-to-delete temp files",
+            SideView::System => "System cleanup",
         }
     }
 }
@@ -394,6 +397,10 @@ struct AppState {
     // cleared on the next scan.
     side_hits: Vec<(*const FolderNode, *const FileEntry)>,
 
+    // Rows of the System-cleanup view (reclaimable system-space categories found
+    // in the current scan), indexed by list row. Rebuilt when the view opens.
+    system_items: Vec<SystemItem>,
+
     // Independent of the drive-scan tree: flat list of files discovered under
     // the known "safe-to-delete" temp locations. Populated by start_temp_scan.
     temp_entries: Vec<TempFileEntry>,
@@ -455,6 +462,9 @@ struct AppState {
     scan_on_launch: bool,
     confirm_recycle: bool,
     show_sidebar: bool,
+    // Whether protected system files (shadow copies, page file, WinSxS…) are
+    // shown in the Top/Oldest file lists. Off by default; toggled in Settings.
+    show_system_files: bool,
     // Main-list column visibility (logical id 0..6). phys_to_logical maps the
     // physical listview column index (visible columns only) back to the logical id.
     col_visible: [bool; 8],
@@ -562,6 +572,7 @@ pub fn run() {
             menu: HMENU::default(),
             side_view: SideView::None,
             side_hits: Vec::new(),
+            system_items: Vec::new(),
             temp_entries: Vec::new(),
             temp_shared: Arc::new(Mutex::new(None)),
             scan_all_active: false,
@@ -587,6 +598,7 @@ pub fn run() {
             scan_on_launch: settings.scan_on_launch,
             confirm_recycle: settings.confirm_recycle,
             show_sidebar: settings.show_sidebar,
+            show_system_files: settings.show_system_files,
             col_visible: settings.col_visible,
             phys_to_logical: compute_phys_to_logical(&settings.col_visible),
             settings_hit: Vec::new(),
@@ -953,6 +965,7 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
         ID_MENU_VIEW_TOPFILES => apply_side_view(hwnd, app, SideView::TopFiles),
         ID_MENU_VIEW_OLDEST => apply_side_view(hwnd, app, SideView::OldestFiles),
         ID_MENU_VIEW_TEMP => apply_side_view(hwnd, app, SideView::TempFiles),
+        ID_MENU_VIEW_SYSTEM => apply_side_view(hwnd, app, SideView::System),
         ID_MENU_VIEW_DETACH | ID_BTN_DETACH => toggle_detach(hwnd, app),
         ID_BTN_RECYCLE_ALL => recycle_all_temp(hwnd, app),
         ID_SCAN_ALL_BTN => {
@@ -1308,8 +1321,8 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
                 app.ctx_target = CtxTarget::SideList;
                 show_context_menu(hwnd, app);
             }
-            c if c == LVN_GETINFOTIPW => {
-                fill_side_infotip(app, lparam.0 as *mut NMLVGETINFOTIPW);
+            c if c == NM_CLICK && app.side_view == SideView::System => {
+                on_system_click(hwnd, app, lparam.0 as *const NMITEMACTIVATE);
             }
             _ => {}
         }
@@ -1317,84 +1330,71 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
     LRESULT(0)
 }
 
-// Decode a NUL-terminated UTF-16 buffer (as returned by side_subitem_text) to a
-// String, stopping at the first NUL.
-fn u16_to_string(buf: &[u16]) -> String {
-    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..end])
+// A protected Windows location that ClutterCutter surfaces (because the raw-MFT
+// scan sees what Explorer hides) but that must not be hand-deleted. Used both to
+// keep these out of the file lists and to drive the System-cleanup panel.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum SystemKind {
+    ShadowCopies, // System Volume Information (restore points / shadow copies)
+    RecycleBin,   // $Recycle.Bin
+    WinSxS,       // Windows component store
+    NtfsMeta,     // $Extend, $MFT, $LogFile, … (not reclaimable)
+    PageFile,     // pagefile.sys
+    HiberFile,    // hiberfil.sys
+    SwapFile,     // swapfile.sys
 }
 
-// Supply the hover tooltip for a side-list row. We only add text for entries that
-// live in a protected system location (shadow copies, NTFS metadata, the page
-// file, WinSxS…) — big things a user might be tempted to delete but shouldn't.
-// Everything else gets an empty tip (no popup).
-unsafe fn fill_side_infotip(app: &AppState, tip: *mut NMLVGETINFOTIPW) {
-    let tip = &mut *tip;
-    if tip.iItem < 0 || tip.pszText.is_null() || tip.cchTextMax <= 1 {
-        return;
-    }
-    let path_col = if app.side_view == SideView::TempFiles {
-        4
-    } else {
-        3
-    };
-    let row = tip.iItem as u32 as usize;
-    let folder = u16_to_string(&side_subitem_text(app.side_list, row, path_col));
-    let file = u16_to_string(&side_subitem_text(app.side_list, row, 0));
-    let note = protected_note(&folder, &file).unwrap_or("");
-    // Copy into the caller's buffer (UTF-16, always NUL-terminated). An empty
-    // string suppresses the tooltip for ordinary files.
-    let mut wide: Vec<u16> = note.encode_utf16().collect();
-    wide.truncate((tip.cchTextMax as usize).saturating_sub(1));
-    wide.push(0);
-    std::ptr::copy_nonoverlapping(wide.as_ptr(), tip.pszText.0, wide.len());
-}
-
-// If `folder`/`file` name a protected Windows location, return a short note
-// explaining what it is and that it shouldn't be hand-deleted. Case-insensitive.
-fn protected_note(folder: &str, file: &str) -> Option<&'static str> {
+// Classify a file by its containing folder path + leaf name. Case-insensitive.
+// `None` means an ordinary user file.
+fn classify_system(folder: &str, file: &str) -> Option<SystemKind> {
     let f = folder.to_ascii_lowercase();
     let name = file.to_ascii_lowercase();
     if f.contains("system volume information") {
-        return Some(
-            "System Volume Information — protected Windows data: System Restore points and \
-             Volume Shadow Copies (\"previous versions\"). Don't delete these directly; if you \
-             need the space, trim them via System Protection or Disk Cleanup → System Restore.",
-        );
+        return Some(SystemKind::ShadowCopies);
     }
     if f.contains("$recycle.bin") {
-        return Some(
-            "Recycle Bin storage — deleted files still recoverable. Empty the Recycle Bin to \
-             reclaim this space instead of deleting the folder.",
-        );
+        return Some(SystemKind::RecycleBin);
     }
     if f.contains("\\winsxs") {
-        return Some(
-            "WinSxS (Windows component store) — servicing files, largely hard-linked so the real \
-             size is smaller than shown. Never delete manually; clean via \
-             \"Dism /Online /Cleanup-Image /StartComponentCleanup\".",
-        );
+        return Some(SystemKind::WinSxS);
     }
     if f.contains("\\$extend") || name.starts_with("$mft") || name.starts_with("$log") {
-        return Some(
-            "NTFS metadata — internal filesystem structures the volume needs to function. \
-             These can't and shouldn't be deleted.",
-        );
+        return Some(SystemKind::NtfsMeta);
     }
     match name.as_str() {
-        "pagefile.sys" => Some(
-            "Windows page file (virtual memory). Don't delete; resize it via System Properties → \
-             Advanced → Performance → Virtual memory if needed.",
-        ),
-        "hiberfil.sys" => Some(
-            "Hibernation file (holds RAM for hibernate/fast startup). Remove only via \
-             \"powercfg /hibernate off\", not by deleting the file.",
-        ),
-        "swapfile.sys" => {
-            Some("Windows swap file for modern (Store) apps. Managed by Windows; don't delete it.")
-        }
+        "pagefile.sys" => Some(SystemKind::PageFile),
+        "hiberfil.sys" => Some(SystemKind::HiberFile),
+        "swapfile.sys" => Some(SystemKind::SwapFile),
         _ => None,
     }
+}
+
+// True if this file lives in a protected system location — kept out of the
+// Top/Oldest file lists unless the user opts in via Settings.
+fn is_system_path(folder: &str, file: &str) -> bool {
+    classify_system(folder, file).is_some()
+}
+
+// What the action button on a System-cleanup row does. We never perform the
+// destructive/elevated operation ourselves — we launch Windows' own tool (which
+// carries its own confirmations/UAC) — except emptying the Recycle Bin, which
+// goes through the shell with Windows' own confirmation dialog.
+#[derive(Copy, Clone)]
+enum SysAction {
+    EmptyRecycleBin,      // shell empty (Windows confirms)
+    OpenSystemProtection, // SystemPropertiesProtection.exe — restore points
+    OpenDiskCleanup,      // cleanmgr.exe — component store / general
+    OpenVirtualMemory,    // SystemPropertiesPerformance.exe — page/swap file
+    HibernateInfo,        // explain `powercfg /hibernate off`
+}
+
+// One row in the System-cleanup panel: a reclaimable category found in the scan.
+struct SystemItem {
+    title: &'static str,
+    detail: &'static str,
+    size: i64,
+    action_label: &'static str,
+    action: SysAction,
 }
 
 // Reliable per-row selection test: `nmcd.uItemState` is not dependable at the
@@ -1860,6 +1860,13 @@ unsafe fn custom_draw_side_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
     };
     let border = if selected { p.blue } else { p.hairline };
     card_round(hdc, &card, 8, p.card_bg, border, 1);
+
+    // System-cleanup rows are drawn from app.system_items (title + amount +
+    // description + an action button), not the file-oriented subitem columns.
+    if app.side_view == SideView::System {
+        draw_system_row(app, hdc, &card, row);
+        return LRESULT(CDRF_SKIPDEFAULT as isize);
+    }
 
     let name = side_subitem_text(app.side_list, row, 0);
     let size = side_subitem_text(app.side_list, row, 1);
@@ -2400,9 +2407,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         app.side_list,
         LVM_SETEXTENDEDLISTVIEWSTYLE,
         WPARAM(0),
-        // INFOTIP lets us surface an explanatory hover tooltip on protected
-        // system entries (e.g. System Volume Information shadow copies).
-        LPARAM(ext | LVS_EX_INFOTIP as isize),
+        LPARAM(ext),
     );
     // Same subclass as the main list: force a full repaint after scroll so no
     // sliver of the previous frame (a duplicated card) survives at the top.
@@ -2528,6 +2533,12 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
         ID_MENU_VIEW_TEMP as usize,
         w!("&Safe-to-delete temp files"),
     );
+    let _ = AppendMenuW(
+        view_pop,
+        MF_STRING,
+        ID_MENU_VIEW_SYSTEM as usize,
+        w!("S&ystem cleanup"),
+    );
     let _ = AppendMenuW(view_pop, MF_SEPARATOR, 0, PCWSTR::null());
     let _ = AppendMenuW(
         view_pop,
@@ -2582,7 +2593,7 @@ unsafe fn build_menu_bar(hwnd: HWND, app: &mut AppState) {
     let _ = CheckMenuRadioItem(
         menu,
         ID_MENU_VIEW_NONE as u32,
-        ID_MENU_VIEW_TEMP as u32,
+        ID_MENU_VIEW_SYSTEM as u32,
         ID_MENU_VIEW_NONE as u32,
         MF_BYCOMMAND.0,
     );
@@ -3725,7 +3736,7 @@ unsafe fn refresh_after_delete(app: &mut AppState) {
     match app.side_view {
         SideView::TopFiles => populate_side_top_files(app),
         SideView::OldestFiles => populate_side_oldest_files(app),
-        SideView::None | SideView::TempFiles => {}
+        SideView::None | SideView::TempFiles | SideView::System => {}
     }
 }
 
@@ -3766,6 +3777,12 @@ where
         {
             continue;
         }
+        // Keep protected system files (shadow copies, page file, WinSxS, NTFS
+        // metadata…) out of the file lists unless the user opts in. They're
+        // surfaced instead in the System-cleanup panel.
+        if !app.show_system_files && is_system_path(&h.folder.full_path, &h.file.name) {
+            continue;
+        }
         rows.push(SideRow {
             name: h.file.name.clone(),
             size: format_bytes(h.file.size),
@@ -3796,6 +3813,321 @@ unsafe fn fill_side_list(app: &mut AppState, rows: &[SideRow]) {
             i as isize,
         );
     }
+}
+
+// ---- System cleanup panel ----
+
+// Folder-level system kinds, matched by a folder's own path. (File-level kinds
+// like pagefile.sys are matched by classify_system on the file name.)
+fn folder_system_kind(path: &str) -> Option<SystemKind> {
+    let f = path.to_ascii_lowercase();
+    if f.contains("system volume information") {
+        Some(SystemKind::ShadowCopies)
+    } else if f.contains("$recycle.bin") {
+        Some(SystemKind::RecycleBin)
+    } else if f.contains("\\winsxs") {
+        Some(SystemKind::WinSxS)
+    } else if f.contains("\\$extend") {
+        Some(SystemKind::NtfsMeta)
+    } else {
+        None
+    }
+}
+
+// Sum reclaimable system space by kind over the scanned tree. Folder-kind nodes
+// contribute their whole subtree size and aren't descended into (no double count).
+fn sum_system(node: &FolderNode, totals: &mut [i64; 7]) {
+    if let Some(k) = folder_system_kind(&node.full_path) {
+        totals[k as usize] += node.size;
+        return;
+    }
+    for f in &node.files {
+        if let Some(k) = classify_system(&node.full_path, &f.name) {
+            totals[k as usize] += f.size;
+        }
+    }
+    for c in &node.children {
+        sum_system(c, totals);
+    }
+}
+
+// Build the System-cleanup rows from the current scan: one per reclaimable
+// category actually found (size > 0), in priority order. NTFS metadata is
+// tallied for exclusion but never shown (it isn't reclaimable).
+fn collect_system_items(root: &FolderNode) -> Vec<SystemItem> {
+    let mut totals = [0i64; 7];
+    sum_system(root, &mut totals);
+    let mut items = Vec::new();
+    let mut push = |kind: SystemKind,
+                    title: &'static str,
+                    detail: &'static str,
+                    action_label: &'static str,
+                    action: SysAction| {
+        let size = totals[kind as usize];
+        if size > 0 {
+            items.push(SystemItem {
+                title,
+                detail,
+                size,
+                action_label,
+                action,
+            });
+        }
+    };
+    push(
+        SystemKind::ShadowCopies,
+        "Restore points & shadow copies",
+        "System Restore and \"previous versions\" snapshots. Manage or cap the size.",
+        "Manage\u{2026}",
+        SysAction::OpenSystemProtection,
+    );
+    push(
+        SystemKind::RecycleBin,
+        "Recycle Bin",
+        "Deleted files, still recoverable. Empty it to reclaim the space.",
+        "Empty",
+        SysAction::EmptyRecycleBin,
+    );
+    push(
+        SystemKind::WinSxS,
+        "Windows component store (WinSxS)",
+        "Servicing files, mostly hard-linked. Clean safely with Disk Cleanup.",
+        "Clean up\u{2026}",
+        SysAction::OpenDiskCleanup,
+    );
+    push(
+        SystemKind::PageFile,
+        "Page file (pagefile.sys)",
+        "Virtual memory. Resize or move it under Virtual Memory settings.",
+        "Settings\u{2026}",
+        SysAction::OpenVirtualMemory,
+    );
+    push(
+        SystemKind::SwapFile,
+        "Swap file (swapfile.sys)",
+        "Used by Store apps; sized automatically by Windows.",
+        "Settings\u{2026}",
+        SysAction::OpenVirtualMemory,
+    );
+    push(
+        SystemKind::HiberFile,
+        "Hibernation file (hiberfil.sys)",
+        "Backs hibernate and Fast Startup. Disable it to remove the file.",
+        "How to\u{2026}",
+        SysAction::HibernateInfo,
+    );
+    items
+}
+
+unsafe fn populate_side_system(app: &mut AppState) {
+    app.system_items = match app.root_node.as_deref() {
+        Some(r) => collect_system_items(r),
+        None => Vec::new(),
+    };
+    SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+    app.side_hits.clear();
+    if app.system_items.is_empty() {
+        insert_row_with_param(
+            app.side_list,
+            0,
+            "No reclaimable system space found in this scan.",
+            &[String::new()],
+            -1,
+        );
+        return;
+    }
+    for (i, it) in app.system_items.iter().enumerate() {
+        insert_row_with_param(
+            app.side_list,
+            i as i32,
+            it.title,
+            &[format_bytes(it.size)],
+            i as isize,
+        );
+    }
+}
+
+// The action-button ("pill") rect inside a System card, shared by the painter
+// and the click hit-test so they always agree.
+fn system_pill_rect(card: &RECT) -> RECT {
+    let pill_w = 92;
+    let pill_h = 24;
+    let right = card.right - 12;
+    let cy = (card.top + card.bottom) / 2;
+    RECT {
+        left: right - pill_w,
+        top: cy - pill_h / 2,
+        right,
+        bottom: cy + pill_h / 2,
+    }
+}
+
+// The card rect for a System row, reconstructed from the list item rect the same
+// way custom_draw_side_list computes it (client width, 3px inset).
+unsafe fn system_card_rect(list: HWND, row: i32) -> RECT {
+    let mut ir = RECT {
+        left: LVIR_BOUNDS as i32,
+        ..Default::default()
+    };
+    SendMessageW(
+        list,
+        LVM_GETITEMRECT,
+        WPARAM(row as usize),
+        LPARAM(&mut ir as *mut RECT as isize),
+    );
+    let mut cl = RECT::default();
+    let _ = GetClientRect(list, &mut cl);
+    RECT {
+        left: cl.left + 6,
+        top: ir.top + 3,
+        right: cl.right - 6,
+        bottom: ir.bottom - 3,
+    }
+}
+
+// Draw one System-cleanup card: title + amount on the top line, a one-line
+// description below, and a right-aligned outlined action button.
+unsafe fn draw_system_row(app: &AppState, hdc: HDC, card: &RECT, row: usize) {
+    let p = palette(app.is_dark);
+    SetBkMode(hdc, TRANSPARENT);
+    let lx = card.left + 12;
+    let mid = (card.top + card.bottom) / 2;
+
+    // Info row (no items found): a single muted line, no button.
+    let Some(it) = app.system_items.get(row) else {
+        let old = SelectObject(hdc, HGDIOBJ(app.font_small.0));
+        SetTextColor(hdc, COLORREF(p.subtext));
+        let mut txt = side_subitem_text(app.side_list, row, 0);
+        let mut rc = RECT {
+            left: lx,
+            top: card.top,
+            right: card.right - 12,
+            bottom: card.bottom,
+        };
+        DrawTextW(
+            hdc,
+            &mut txt,
+            &mut rc,
+            DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+        );
+        SelectObject(hdc, old);
+        return;
+    };
+
+    // Action button on the right, outlined in blue.
+    let pill = system_pill_rect(card);
+    card_round(hdc, &pill, 6, p.card_bg, p.blue, 1);
+    let small = SelectObject(hdc, HGDIOBJ(app.font_small.0));
+    SetTextColor(hdc, COLORREF(p.blue));
+    let mut label: Vec<u16> = it.action_label.encode_utf16().collect();
+    let mut plr = pill;
+    DrawTextW(
+        hdc,
+        &mut label,
+        &mut plr,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+    );
+
+    let region_right = pill.left - 10;
+    // Size (blue) top-right of the text region — measure so the title clamps.
+    let mut size_txt: Vec<u16> = format_bytes(it.size).encode_utf16().collect();
+    let mut scalc = RECT::default();
+    DrawTextW(hdc, &mut size_txt, &mut scalc, DT_CALCRECT | DT_SINGLELINE);
+    let size_w = scalc.right - scalc.left;
+    let mut src = RECT {
+        left: region_right - size_w,
+        top: card.top,
+        right: region_right,
+        bottom: mid,
+    };
+    DrawTextW(
+        hdc,
+        &mut size_txt,
+        &mut src,
+        DT_SINGLELINE | DT_VCENTER | DT_RIGHT,
+    );
+    // Title on the top line (default font), clamped left of the size.
+    SelectObject(hdc, small);
+    SetTextColor(hdc, COLORREF(p.text));
+    let mut title: Vec<u16> = it.title.encode_utf16().collect();
+    let mut trc = RECT {
+        left: lx,
+        top: card.top,
+        right: region_right - size_w - 8,
+        bottom: mid,
+    };
+    DrawTextW(
+        hdc,
+        &mut title,
+        &mut trc,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX,
+    );
+    // Detail on the second line (muted, small).
+    SelectObject(hdc, HGDIOBJ(app.font_small.0));
+    SetTextColor(hdc, COLORREF(p.subtext));
+    let mut detail: Vec<u16> = it.detail.encode_utf16().collect();
+    let mut drc = RECT {
+        left: lx,
+        top: mid,
+        right: region_right,
+        bottom: card.bottom,
+    };
+    DrawTextW(
+        hdc,
+        &mut detail,
+        &mut drc,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX,
+    );
+}
+
+// A click landed on the System list — run the action if it hit the row's button.
+unsafe fn on_system_click(hwnd: HWND, app: &mut AppState, act: *const NMITEMACTIVATE) {
+    let act = &*act;
+    let row = act.iItem;
+    if row < 0 || (row as usize) >= app.system_items.len() {
+        return;
+    }
+    let card = system_card_rect(app.side_list, row);
+    let pill = system_pill_rect(&card);
+    let (x, y) = (act.ptAction.x, act.ptAction.y);
+    if x >= pill.left && x < pill.right && y >= pill.top && y < pill.bottom {
+        let action = app.system_items[row as usize].action;
+        run_system_action(hwnd, app, action);
+    }
+}
+
+unsafe fn run_system_action(hwnd: HWND, app: &mut AppState, action: SysAction) {
+    match action {
+        SysAction::EmptyRecycleBin => {
+            // Windows shows its own permanent-delete confirmation (flags = 0).
+            let _ = SHEmptyRecycleBinW(hwnd, PCWSTR::null(), 0);
+            set_status(app.status, "Opened Windows' Recycle Bin empty dialog.");
+        }
+        SysAction::OpenSystemProtection => launch_tool("SystemPropertiesProtection.exe"),
+        SysAction::OpenDiskCleanup => launch_tool("cleanmgr.exe"),
+        SysAction::OpenVirtualMemory => launch_tool("SystemPropertiesPerformance.exe"),
+        SysAction::HibernateInfo => {
+            let body = wide(
+                "To remove hiberfil.sys, open an elevated Command Prompt \
+                 (Run as administrator) and run:\n\n    powercfg /hibernate off\n\n\
+                 This also disables Fast Startup. To re-enable it later:\n\n    \
+                 powercfg /hibernate on",
+            );
+            let title = wide("Hibernation file");
+            MessageBoxW(
+                hwnd,
+                PCWSTR(body.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                MB_OK | MB_ICONINFORMATION,
+            );
+        }
+    }
+}
+
+// Launch a built-in Windows tool by name (found on PATH in System32). It elevates
+// itself via UAC if it needs to; nothing here runs elevated on its own.
+fn launch_tool(exe: &str) {
+    unsafe { shell_exec("open", exe, None, None) };
 }
 
 // ---- Side panel ----
@@ -3839,6 +4171,13 @@ unsafe fn apply_side_view(hwnd: HWND, app: &mut AppState, view: SideView) {
             } else {
                 populate_side_temp(app);
             }
+        }
+        SideView::System => {
+            // Two columns just so the list has rows to select/scroll; the cards
+            // are custom-drawn from app.system_items, not the subitem text.
+            insert_column(app.side_list, 0, "Item", 220, false);
+            insert_column(app.side_list, 1, "Size", 90, true);
+            populate_side_system(app);
         }
     }
     if view != SideView::None {
@@ -3889,11 +4228,12 @@ unsafe fn apply_side_view(hwnd: HWND, app: &mut AppState, view: SideView) {
             SideView::TopFiles => ID_MENU_VIEW_TOPFILES,
             SideView::OldestFiles => ID_MENU_VIEW_OLDEST,
             SideView::TempFiles => ID_MENU_VIEW_TEMP,
+            SideView::System => ID_MENU_VIEW_SYSTEM,
         } as u32;
         let _ = CheckMenuRadioItem(
             app.menu,
             ID_MENU_VIEW_NONE as u32,
-            ID_MENU_VIEW_TEMP as u32,
+            ID_MENU_VIEW_SYSTEM as u32,
             id,
             MF_BYCOMMAND.0,
         );
@@ -4039,7 +4379,7 @@ unsafe fn fit_side_columns(list: HWND) {
 
 // The three view-switch icon buttons at the left of the panel header row (Top
 // largest / Oldest / Safe-to-delete temp).
-fn panel_view_buttons() -> [RECT; 3] {
+fn panel_view_buttons() -> [RECT; 4] {
     let bw = 38;
     let bh = 28;
     let gap = 5;
@@ -4054,14 +4394,15 @@ fn panel_view_buttons() -> [RECT; 3] {
             bottom: ty + bh,
         }
     };
-    [mk(0), mk(1), mk(2)]
+    [mk(0), mk(1), mk(2), mk(3)]
 }
 
 // The SideView each toolbar button selects, and its Segoe MDL2 glyph.
-const PANEL_VIEW_BUTTONS: [(SideView, &str); 3] = [
+const PANEL_VIEW_BUTTONS: [(SideView, &str); 4] = [
     (SideView::TopFiles, "\u{E8A5}"),    // Document
     (SideView::OldestFiles, "\u{E81C}"), // History
     (SideView::TempFiles, "\u{E74D}"),   // Delete
+    (SideView::System, "\u{E90F}"),      // Repair (system cleanup)
 ];
 
 unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
@@ -4116,7 +4457,7 @@ unsafe fn paint_panel_header(app: &AppState, panel: HWND) {
     // View title, between the view buttons and the Detach/Recycle buttons.
     SelectObject(hdc, HGDIOBJ(app.font_small.0));
     SetTextColor(hdc, COLORREF(p.text));
-    let title_left = btns[2].right + 14;
+    let title_left = btns[3].right + 14;
     let title_right = (header_buttons_left_x(app, rc.right) - PANEL_BTN_GAP).max(title_left);
     let mut text_rc = RECT {
         left: title_left,
