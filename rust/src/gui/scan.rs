@@ -390,7 +390,7 @@ unsafe fn finish_scan_all(app: &mut AppState) {
     }
     // The global side views were empty during the scan; populate them now.
     match app.side_view {
-        SideView::None | SideView::TempFiles => {}
+        SideView::None | SideView::TempFiles | SideView::System => {}
         SideView::TopFiles => populate_side_top_files(app),
         SideView::OldestFiles => populate_side_oldest_files(app),
     }
@@ -514,7 +514,7 @@ pub(crate) unsafe fn on_scan_done(app: &mut AppState) {
     // The file-ranking side views are global over the new tree; refresh them
     // directly. TempFiles is independent of drive scans entirely.
     match app.side_view {
-        SideView::None | SideView::TempFiles => {}
+        SideView::None | SideView::TempFiles | SideView::System => {}
         SideView::TopFiles => populate_side_top_files(app),
         SideView::OldestFiles => populate_side_oldest_files(app),
     }

@@ -47,6 +47,7 @@ pub(crate) struct Settings {
     pub scan_on_launch: bool,
     pub confirm_recycle: bool,
     pub show_sidebar: bool,
+    pub show_system_files: bool,
     pub col_visible: [bool; 8],
 }
 
@@ -60,6 +61,7 @@ impl Default for Settings {
             scan_on_launch: true,
             confirm_recycle: true,
             show_sidebar: true,
+            show_system_files: false,
             col_visible: [true; 8],
         }
     }
@@ -100,12 +102,15 @@ pub(crate) fn load() -> Settings {
                     "top" => SideView::TopFiles,
                     "oldest" => SideView::OldestFiles,
                     "temp" => SideView::TempFiles,
+                    "system" => SideView::System,
                     _ => SideView::None,
                 }
             }
             "scan_on_launch" => s.scan_on_launch = v != "0",
             "confirm_recycle" => s.confirm_recycle = v != "0",
             "show_sidebar" => s.show_sidebar = v != "0",
+            // Default false, so only an explicit "1" enables it.
+            "show_system" => s.show_system_files = v == "1",
             "cols" => {
                 // 8-char bitmask, one per logical column. Ignore anything of the
                 // wrong length (e.g. a pre-FREE-column config) and keep defaults.
@@ -139,6 +144,7 @@ pub(crate) fn save(s: &Settings) {
         SideView::TopFiles => "top",
         SideView::OldestFiles => "oldest",
         SideView::TempFiles => "temp",
+        SideView::System => "system",
         SideView::None => "none",
     };
     let cols: String = s
@@ -147,11 +153,12 @@ pub(crate) fn save(s: &Settings) {
         .map(|&b| if b { '1' } else { '0' })
         .collect();
     let text = format!(
-        "theme={theme}\nunits={}\nside={side}\nscan_on_launch={}\nconfirm_recycle={}\nshow_sidebar={}\ncols={cols}\n",
+        "theme={theme}\nunits={}\nside={side}\nscan_on_launch={}\nconfirm_recycle={}\nshow_sidebar={}\nshow_system={}\ncols={cols}\n",
         if s.units_binary { "binary" } else { "decimal" },
         s.scan_on_launch as i32,
         s.confirm_recycle as i32,
         s.show_sidebar as i32,
+        s.show_system_files as i32,
     );
     let _ = std::fs::write(p, text);
 }
@@ -165,6 +172,7 @@ pub(crate) fn save_from(app: &AppState) {
         scan_on_launch: app.scan_on_launch,
         confirm_recycle: app.confirm_recycle,
         show_sidebar: app.show_sidebar,
+        show_system_files: app.show_system_files,
         col_visible: app.col_visible,
     });
 }
@@ -186,6 +194,7 @@ const A_SIDE_NONE: i32 = 33;
 const A_TOG_SCAN: i32 = 40;
 const A_TOG_CONFIRM: i32 = 41;
 const A_TOG_SIDEBAR: i32 = 42;
+const A_TOG_SYSFILES: i32 = 43;
 // Column-visibility toggles carry the logical column id (1,3,4,5,6) as 100 + id.
 const A_COL_BASE: i32 = 100;
 
@@ -225,7 +234,7 @@ const COLUMN_ROWS: [(&str, i32, &str); 6] = [
 ];
 
 const WIN_W: i32 = 460;
-const WIN_H: i32 = 676;
+const WIN_H: i32 = 712;
 
 pub(crate) unsafe fn show_settings(parent: HWND, app: &mut AppState) {
     let hinstance = GetModuleHandleW(None).expect("hinst");
@@ -567,9 +576,17 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         app.show_sidebar,
         A_TOG_SIDEBAR,
     );
+    row_checkbox(
+        hdc,
+        app,
+        "Show protected system files",
+        384,
+        app.show_system_files,
+        A_TOG_SYSFILES,
+    );
 
-    section(hdc, app, "COLUMNS  (Name and Size always shown)", 396);
-    let mut cy = 424;
+    section(hdc, app, "COLUMNS  (Name and Size always shown)", 430);
+    let mut cy = 458;
     for (idx, (label, logical, _)) in COLUMN_ROWS.iter().enumerate() {
         row_checkbox(
             hdc,
@@ -650,6 +667,13 @@ unsafe fn apply_action(hwnd: HWND, app: &mut AppState, action: i32) {
             layout(main, app);
             let _ = InvalidateRect(main, None, true);
         }
+        A_TOG_SYSFILES => {
+            app.show_system_files = !app.show_system_files;
+            // The side-view cache holds already-filtered rows; drop it and
+            // re-populate so the change shows immediately.
+            app.side_cache.clear();
+            refresh_side_files(app);
+        }
         a if a >= A_COL_BASE => {
             let logical = (a - A_COL_BASE) as usize;
             if logical < 7 && !super::ALWAYS_SHOWN_COLS.contains(&logical) {
@@ -685,13 +709,19 @@ unsafe fn refresh_after_units(app: &mut AppState) {
     // hasn't changed — clear it and re-populate the current view (apply_side_view
     // no-ops when the view is unchanged, so call the populate fns directly).
     app.side_cache.clear();
+    refresh_side_files(app);
+    let _ = InvalidateRect(app.sidebar, None, false);
+    let _ = InvalidateRect(app.status, None, false);
+}
+
+// Re-populate whichever file-based side view is active (used after a units change
+// or a system-files-visibility toggle). No-op for the non-file views.
+unsafe fn refresh_side_files(app: &mut AppState) {
     match app.side_view {
         SideView::TopFiles => populate_side_top_files(app),
         SideView::OldestFiles => populate_side_oldest_files(app),
-        SideView::None | SideView::TempFiles => {}
+        SideView::None | SideView::TempFiles | SideView::System => {}
     }
-    let _ = InvalidateRect(app.sidebar, None, false);
-    let _ = InvalidateRect(app.status, None, false);
 }
 
 unsafe extern "system" fn settings_proc(
