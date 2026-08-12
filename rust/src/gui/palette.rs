@@ -40,14 +40,16 @@ pub(crate) fn palette(is_dark: bool) -> Pal {
             green: 0x005C_C87C, // #7CC85C
         }
     } else {
+        // Warm-white light theme: off-whites with a slight red/yellow cast
+        // instead of pure/cool white, which several users found harshly bright.
         Pal {
-            win_bg: 0x00F4_F0EE, // #EEF0F4
-            card_bg: 0x00FF_FFFF,
-            panel_bg: 0x00FA_F8F7, // #F7F8FA
-            text: 0x0022_2622,
-            subtext: 0x00A0_928A,  // #8A92A0
-            hairline: 0x00EC_E7E4, // #E4E7EC
-            track: 0x00F1_ECE9,    // #E9ECF1
+            win_bg: 0x00E3_EBF0,   // #F0EBE3 warm light gray (chrome)
+            card_bg: 0x00F2_F8FB,  // #FBF8F2 warm white (cards / table)
+            panel_bg: 0x00E8_F1F6, // #F6F1E8 warm off-white (panel body)
+            text: 0x0020_2326,     // #262320 warm near-black
+            subtext: 0x0078_838C,  // #8C8378 warm gray
+            hairline: 0x00D6_E1E8, // #E8E1D6 warm hairline
+            track: 0x00DB_E6ED,    // #EDE6DB warm bar track
             blue: 0x00F0_6B2D,     // #2D6BF0
             green: 0x0051_BB70,    // #70BB51
         }
