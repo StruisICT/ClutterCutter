@@ -55,8 +55,8 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
-    GetSysColorBrush, InvalidateRect, RedrawWindow, SelectObject, SetBkColor, SetBkMode,
+    BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC, GetSysColor,
+    GetSysColorBrush, InvalidateRect, RedrawWindow, ReleaseDC, SelectObject, SetBkColor, SetBkMode,
     SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT,
     DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_PATH_ELLIPSIS, DT_RIGHT, DT_SINGLELINE,
     DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE,
@@ -89,7 +89,7 @@ use windows::Win32::UI::Controls::{
     TVM_SETITEMW, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES,
     TVS_LINESATROOT, TVS_SHOWSELALWAYS, TVS_TRACKSELECT,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus, SetFocus};
 use windows::Win32::UI::Shell::{
     DefSubclassProc, IsUserAnAdmin, SHEmptyRecycleBinW, SHFileOperationW, SetWindowSubclass,
     ShellExecuteW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FO_DELETE, SHFILEOPSTRUCTW,
@@ -2215,6 +2215,21 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     );
     let cue = wide("Search all files\u{2026}");
     SendMessageW(app.search, 0x1501, WPARAM(1), LPARAM(cue.as_ptr() as isize));
+    // Reserve a right margin so typed text doesn't run under the clear "×", and
+    // subclass the box to paint that × and clear on click / Esc.
+    // EM_SETMARGINS = 0xD3, EC_RIGHTMARGIN = 0x2 (right margin in the HIWORD).
+    SendMessageW(
+        app.search,
+        0x00D3,
+        WPARAM(0x2),
+        LPARAM((SEARCH_CLEAR_W as isize) << 16),
+    );
+    let _ = SetWindowSubclass(
+        app.search,
+        Some(search_subclass),
+        2,
+        app as *mut AppState as usize,
+    );
 
     let sidebar_class = w!("ClutterCutterDrives");
     RegisterClassExW(&WNDCLASSEXW {
@@ -3220,6 +3235,81 @@ unsafe fn run_search(app: &mut AppState) {
     }
     app.search_active = true;
     populate_search(app, &query);
+}
+
+// Width of the reserved right margin / clear-button hotspot in the search box.
+const SEARCH_CLEAR_W: i32 = 20;
+
+// True if the search box currently holds any text.
+unsafe fn search_has_text(edit: HWND) -> bool {
+    let mut buf = [0u16; 4];
+    GetWindowTextW(edit, &mut buf) > 0
+}
+
+// Clear the search box and restore the normal view.
+unsafe fn clear_search_box(edit: HWND, refdata: usize) {
+    let _ = SetWindowTextW(edit, w!(""));
+    let app = &mut *(refdata as *mut AppState);
+    run_search(app); // empty query -> drops search mode, restores the folder view
+    let _ = InvalidateRect(edit, None, true);
+    let _ = SetFocus(edit);
+}
+
+// Subclass on the search EDIT: paints a small clear "\u{2715}" at the right edge
+// while there's text, and clears the box when that's clicked or Esc is pressed.
+unsafe extern "system" fn search_subclass(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    // WM_PAINT = 0x000F: let the EDIT paint, then overlay the clear "×".
+    if msg == 0x000F {
+        let r = DefSubclassProc(hwnd, msg, wparam, lparam);
+        if search_has_text(hwnd) {
+            let app = &*(refdata as *const AppState);
+            let mut cl = RECT::default();
+            let _ = GetClientRect(hwnd, &mut cl);
+            let hdc = GetDC(hwnd);
+            let old = SelectObject(hdc, HGDIOBJ(app.font_small.0));
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, COLORREF(palette(app.is_dark).subtext));
+            let mut xrc = RECT {
+                left: cl.right - SEARCH_CLEAR_W,
+                top: cl.top,
+                right: cl.right,
+                bottom: cl.bottom,
+            };
+            let mut g: Vec<u16> = "\u{2715}".encode_utf16().collect();
+            DrawTextW(
+                hdc,
+                &mut g,
+                &mut xrc,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
+            SelectObject(hdc, old);
+            let _ = ReleaseDC(hwnd, hdc);
+        }
+        return r;
+    }
+    // WM_LBUTTONDOWN = 0x0201: a click on the "\u{2715}" clears the box.
+    if msg == 0x0201 {
+        let x = (lparam.0 & 0xFFFF) as i16 as i32;
+        let mut cl = RECT::default();
+        let _ = GetClientRect(hwnd, &mut cl);
+        if search_has_text(hwnd) && x >= cl.right - SEARCH_CLEAR_W {
+            clear_search_box(hwnd, refdata);
+            return LRESULT(0);
+        }
+    }
+    // WM_CHAR = 0x0102: Esc clears the box (and swallows the beep).
+    if msg == 0x0102 && wparam.0 == 0x1B {
+        clear_search_box(hwnd, refdata);
+        return LRESULT(0);
+    }
+    DefSubclassProc(hwnd, msg, wparam, lparam)
 }
 
 // Flips the expand state of the folder at `row` and rebuilds the list from the
