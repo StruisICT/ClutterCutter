@@ -188,6 +188,10 @@ const TOP_N_FILES: usize = 100;
 // Custom messages
 // Timer that advances the indeterminate "scanning" bars on drive rows.
 const DRIVE_MARQUEE_TIMER: usize = 1;
+// Debounce timer for the search box: typing (re)starts it, and the search only
+// runs once it fires, so a burst of keystrokes triggers a single search.
+const SEARCH_TIMER: usize = 2;
+const SEARCH_DEBOUNCE_MS: u32 = 220;
 const WM_APP_PROGRESS: u32 = WM_APP + 1;
 const WM_APP_DONE: u32 = WM_APP + 2;
 const WM_APP_TEMP_DONE: u32 = WM_APP + 3;
@@ -857,9 +861,11 @@ unsafe extern "system" fn wnd_proc(
             let id = (wparam.0 & 0xFFFF) as u16;
             let notif = ((wparam.0 >> 16) & 0xFFFF) as u16;
             if id == ID_SEARCH {
-                // EN_CHANGE = 0x0300: the search text changed.
+                // EN_CHANGE = 0x0300: the search text changed. Debounce — restart
+                // the timer so the search only fires ~SEARCH_DEBOUNCE_MS after the
+                // last keystroke, not on every character.
                 if notif == 0x0300 {
-                    run_search(app);
+                    SetTimer(hwnd, SEARCH_TIMER, SEARCH_DEBOUNCE_MS, None);
                 }
             } else {
                 on_command(hwnd, app, id);
@@ -901,6 +907,12 @@ unsafe extern "system" fn wnd_proc(
                 app.marquee_phase = app.marquee_phase.wrapping_add(1);
                 let _ = InvalidateRect(app.list, None, false);
             }
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == SEARCH_TIMER => {
+            // Debounce elapsed: run the pending search once.
+            let _ = KillTimer(hwnd, SEARCH_TIMER);
+            run_search(app);
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -3250,6 +3262,8 @@ unsafe fn search_has_text(edit: HWND) -> bool {
 unsafe fn clear_search_box(edit: HWND, refdata: usize) {
     let _ = SetWindowTextW(edit, w!(""));
     let app = &mut *(refdata as *mut AppState);
+    // Clearing is immediate — cancel any pending debounced search first.
+    let _ = KillTimer(app.main_hwnd, SEARCH_TIMER);
     run_search(app); // empty query -> drops search mode, restores the folder view
     let _ = InvalidateRect(edit, None, true);
     let _ = SetFocus(edit);
