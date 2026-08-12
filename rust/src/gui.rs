@@ -58,9 +58,9 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
     GetSysColorBrush, InvalidateRect, RedrawWindow, SelectObject, SetBkColor, SetBkMode,
     SetTextColor, UpdateWindow, COLOR_BTNFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, DT_CALCRECT,
-    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH,
-    HDC, HFONT, HGDIOBJ, PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW,
-    TRANSPARENT,
+    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_PATH_ELLIPSIS, DT_RIGHT, DT_SINGLELINE,
+    DT_VCENTER, HBRUSH, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE,
+    RDW_INVALIDATE, RDW_UPDATENOW, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
@@ -100,16 +100,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
     IsDialogMessageW, IsZoomed, KillTimer, LoadCursorW, LoadIconW, LoadImageW, MessageBoxW,
     MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow,
-    SetMenu, SetParent, SetTimer, SetWindowLongPtrW, SetWindowTextW, ShowWindow, TrackPopupMenu,
-    TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON, CREATESTRUCTW,
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HICON, HMENU, IDC_ARROW,
-    IDC_SIZEWE, IDI_APPLICATION, IDYES, IMAGE_ICON, LR_DEFAULTCOLOR, MB_ICONINFORMATION,
-    MB_ICONWARNING, MB_OK, MB_YESNO, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG,
-    SM_CXVSCROLL, SW_HIDE, SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW,
-    WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_EX_CLIENTEDGE,
-    WS_EX_CONTROLPARENT, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    SetMenu, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
+    TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON,
+    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HICON, HMENU,
+    HWND_TOP, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, IDYES, IMAGE_ICON, LR_DEFAULTCOLOR,
+    MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, MSG, SM_CXVSCROLL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_NORMAL,
+    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND,
+    WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE,
+    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW,
+    WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
+    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 // ---- Control ids ----
@@ -1619,11 +1620,19 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
             bottom: rc.bottom,
         };
         SetTextColor(hdc, COLORREF(fg));
+        // Search rows carry the full path as the name; ellipsize the middle so the
+        // matching file name (at the end) stays visible. Folder view keeps leaf
+        // names, so end-ellipsis is right there.
+        let ell = if app.search_active {
+            DT_PATH_ELLIPSIS
+        } else {
+            DT_END_ELLIPSIS
+        };
         DrawTextW(
             hdc,
             &mut name,
             &mut nrc,
-            DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+            DT_SINGLELINE | DT_VCENTER | DT_LEFT | ell,
         );
         return LRESULT(CDRF_SKIPDEFAULT as isize);
     }
@@ -2165,7 +2174,9 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         WINDOW_EX_STYLE(0),
         topbar_class,
         PCWSTR::null(),
-        WS_CHILD | WS_VISIBLE,
+        // CLIPSIBLINGS so the bar doesn't paint over the search EDIT that floats
+        // above it (otherwise the box only shows when it repaints itself on hover).
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
         0,
         0,
         800,
@@ -2184,7 +2195,7 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
         WINDOW_EX_STYLE(0),
         w!("EDIT"),
         PCWSTR::null(),
-        WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(0x80),
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_CLIPSIBLINGS | WINDOW_STYLE(0x80),
         0,
         0,
         200,
@@ -2618,6 +2629,18 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
     let s_x = 104;
     let s_w = (rc.right - s_x - 130).clamp(140, 340);
     let _ = MoveWindow(app.search, s_x, (TOPBAR_H - s_h) / 2, s_w, s_h, true);
+    // The search EDIT overlaps the top-bar child, and despite being created after
+    // it, it ends up *below* the bar in the sibling z-order — so clicks in the box
+    // were being swallowed by the bar. Force it to the top so it's clickable.
+    let _ = SetWindowPos(
+        app.search,
+        HWND_TOP,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    );
 
     // Row 1: left DRIVES sidebar (hidden if the user turned it off), then the
     // content area (breadcrumb + table + optional side panel).
