@@ -191,7 +191,7 @@ const DRIVE_MARQUEE_TIMER: usize = 1;
 // Debounce timer for the search box: typing (re)starts it, and the search only
 // runs once it fires, so a burst of keystrokes triggers a single search.
 const SEARCH_TIMER: usize = 2;
-const SEARCH_DEBOUNCE_MS: u32 = 220;
+const SEARCH_DEBOUNCE_MS: u32 = 350;
 const WM_APP_PROGRESS: u32 = WM_APP + 1;
 const WM_APP_DONE: u32 = WM_APP + 2;
 const WM_APP_TEMP_DONE: u32 = WM_APP + 3;
