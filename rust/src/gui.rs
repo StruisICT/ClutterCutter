@@ -330,6 +330,10 @@ struct AppState {
     // of every file/folder in the scan whose name matches (search_active).
     search: HWND,
     search_active: bool,
+    // A query typed while only a single drive was scanned: we kick off an
+    // all-drives scan and run this search once it finishes, so "Search all
+    // files" always spans every drive.
+    search_pending: Option<String>,
     font_title: HFONT,
     font_small: HFONT,
     // Segoe MDL2 Assets glyphs (folder / file / drive / sun / moon icons).
@@ -542,6 +546,7 @@ pub fn run() {
             crumb: HWND::default(),
             search: HWND::default(),
             search_active: false,
+            search_pending: None,
             font_title: HFONT::default(),
             font_small: HFONT::default(),
             font_icon: HFONT::default(),
@@ -3255,6 +3260,16 @@ unsafe fn run_search(app: &mut AppState) {
                 populate_list_folders(app, &*(app.selected_node as *const FolderNode));
             }
         }
+        // Leave search_pending alone: the empty change may be the box being
+        // cleared by an in-flight all-drives scan we're about to search.
+        return;
+    }
+    // "Search all files" must span every drive. If the current scan is only a
+    // single drive (F5 on one drive / an uncached drive click) while more drives
+    // exist, scan them all first and run this search when it finishes.
+    if app.drives.len() > 1 && !matches!(app.last_scan, Some(ScanRequest::AllDrives)) {
+        app.search_pending = Some(query);
+        start_scan_all(app.main_hwnd, app);
         return;
     }
     app.search_active = true;

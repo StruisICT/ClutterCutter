@@ -424,6 +424,15 @@ unsafe fn finish_scan_all(app: &mut AppState) {
         elapsed,
     );
     set_status(app.status, &summary);
+
+    // A search was requested while only a single drive was scanned; now that all
+    // drives are in, restore the query and run it across the full tree.
+    if let Some(q) = app.search_pending.take() {
+        let qw: Vec<u16> = q.encode_utf16().chain(std::iter::once(0)).collect();
+        let _ = SetWindowTextW(app.search, windows::core::PCWSTR(qw.as_ptr()));
+        app.search_active = true;
+        populate_search(app, &q);
+    }
 }
 
 pub(crate) fn on_progress(app: &mut AppState) {
