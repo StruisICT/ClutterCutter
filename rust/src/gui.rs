@@ -3107,7 +3107,7 @@ fn build_search_rows(
     deleted: &HashSet<isize>,
     deleted_files: &HashSet<isize>,
     drives: &[DriveInfo],
-    q: &str,
+    terms: &[String],
     cap: usize,
     out: &mut Vec<BuiltRow>,
 ) {
@@ -3119,11 +3119,16 @@ fn build_search_rows(
         mtime: i64,
         path: String,
     }
+    // Space-separated AND: a name matches only if it contains every term.
+    fn matches(name: &str, terms: &[String]) -> bool {
+        let lname = name.to_lowercase();
+        terms.iter().all(|t| lname.contains(t.as_str()))
+    }
     fn walk(
         node: &FolderNode,
         deleted: &HashSet<isize>,
         deleted_files: &HashSet<isize>,
-        q: &str,
+        terms: &[String],
         hits: &mut Vec<Hit>,
     ) {
         for c in &node.children {
@@ -3131,7 +3136,7 @@ fn build_search_rows(
             if deleted.contains(&cp) {
                 continue;
             }
-            if c.name.to_lowercase().contains(q) {
+            if matches(&c.name, terms) {
                 hits.push(Hit {
                     is_folder: true,
                     ptr: cp,
@@ -3141,7 +3146,7 @@ fn build_search_rows(
                     path: c.full_path.clone(),
                 });
             }
-            walk(c, deleted, deleted_files, q, hits);
+            walk(c, deleted, deleted_files, terms, hits);
         }
         let owner = node as *const FolderNode as isize;
         for f in &node.files {
@@ -3149,7 +3154,7 @@ fn build_search_rows(
             if deleted_files.contains(&fp) {
                 continue;
             }
-            if f.name.to_lowercase().contains(q) {
+            if matches(&f.name, terms) {
                 hits.push(Hit {
                     is_folder: false,
                     ptr: fp,
@@ -3162,7 +3167,7 @@ fn build_search_rows(
         }
     }
     let mut hits: Vec<Hit> = Vec::new();
-    walk(root, deleted, deleted_files, q, &mut hits);
+    walk(root, deleted, deleted_files, terms, &mut hits);
     hits.sort_by_key(|h| std::cmp::Reverse(h.size));
     hits.truncate(cap);
     let total = root.size.max(1) as f32;
@@ -3195,20 +3200,27 @@ fn build_search_rows(
     }
 }
 
-// Rebuild the main list as flat search results for `query`.
+// Rebuild the main list as flat search results for `query`. Whitespace splits the
+// query into AND terms: a name must contain all of them.
 unsafe fn populate_search(app: &mut AppState, query: &str) {
-    let q = query.to_lowercase();
+    let terms: Vec<String> = query
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
     let mut rows = Vec::new();
-    if let Some(root) = app.root_node.as_deref() {
-        build_search_rows(
-            root,
-            &app.deleted_nodes,
-            &app.deleted_files,
-            &app.drives,
-            &q,
-            2000,
-            &mut rows,
-        );
+    if !terms.is_empty() {
+        if let Some(root) = app.root_node.as_deref() {
+            build_search_rows(
+                root,
+                &app.deleted_nodes,
+                &app.deleted_files,
+                &app.drives,
+                &terms,
+                2000,
+                &mut rows,
+            );
+        }
     }
     SendMessageW(app.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     for (i, b) in rows.iter().enumerate() {
