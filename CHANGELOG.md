@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.0](https://github.com/StruisICT/ClutterCutter/compare/v0.8.0...v0.9.0) (2026-08-13)
+
+
+### Features
+
+* clear button (×) in the search box, plus Esc to clear ([#67](https://github.com/StruisICT/ClutterCutter/issues/67)) ([79ea8b3](https://github.com/StruisICT/ClutterCutter/commit/79ea8b3250b8ab207c68b69123bb6b8b079914a4))
+* debounce the search box so it runs once you pause typing ([#68](https://github.com/StruisICT/ClutterCutter/issues/68)) ([df27be2](https://github.com/StruisICT/ClutterCutter/commit/df27be2c72f6061f5fbbfd96dad5043d39b4cf2b))
+* hover tooltip explaining protected system files in the side panel ([#61](https://github.com/StruisICT/ClutterCutter/issues/61)) ([79eff30](https://github.com/StruisICT/ClutterCutter/commit/79eff301901de0daed8c5ece52ac64f03c8f8bd6))
+* search always spans all drives ([#71](https://github.com/StruisICT/ClutterCutter/issues/71)) ([c080901](https://github.com/StruisICT/ClutterCutter/commit/c08090147ca8af3a7af7954bdef5d915d0727e8d))
+* space-separated AND terms in search ([#69](https://github.com/StruisICT/ClutterCutter/issues/69)) ([0de4a65](https://github.com/StruisICT/ClutterCutter/commit/0de4a6515e20b3cc4382c1b5648347a3b6d7ff5f))
+* System-cleanup panel + hide protected system files from file lists ([#63](https://github.com/StruisICT/ClutterCutter/issues/63)) ([0dc1659](https://github.com/StruisICT/ClutterCutter/commit/0dc1659f19c7a280c012001796b9283e0efbc82e))
+* warm-white light theme instead of pure white ([#66](https://github.com/StruisICT/ClutterCutter/issues/66)) ([77dd91b](https://github.com/StruisICT/ClutterCutter/commit/77dd91bfef65be3bf93316536a4c48231bf081a5))
+
+
+### Bug Fixes
+
+* guide to shadow-copy tools on Server instead of a dead System Protection launch ([#64](https://github.com/StruisICT/ClutterCutter/issues/64)) ([4624bea](https://github.com/StruisICT/ClutterCutter/commit/4624bead60b7eb6318604613fe5b1a1892fbd97b))
+* make the search box clickable, always visible, and results readable ([#65](https://github.com/StruisICT/ClutterCutter/issues/65)) ([f3dcfb1](https://github.com/StruisICT/ClutterCutter/commit/f3dcfb1376caa36d0a74f59c00e4ba442427270f))
+
 ## [0.8.0](https://github.com/StruisICT/ClutterCutter/compare/v0.7.0...v0.8.0) (2026-08-07)
 
 
