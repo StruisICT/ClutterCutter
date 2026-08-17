@@ -23,12 +23,15 @@ are attached to every GitHub Release.
 
 | Build | Source | Output | Status |
 |-------|--------|--------|--------|
-| **C#** (canonical, original) | `ClutterCutter.cs` (single file, ~124 KB src) | `ClutterCutter.exe` (~70 KB) | Mature, feature-complete, shipping |
-| **Rust port** | `rust/` crate | `cluttercutter.exe` → renamed `ClutterCutter-rust.exe` for release | Active; near parity, **this is the binary winget packages** |
+| **Rust port** (primary) | `rust/` crate | `cluttercutter.exe` → shipped as `ClutterCutter.exe` | **The shipping build** — current UI + all features; **this is what winget packages** |
+| **C#** (legacy original) | `ClutterCutter.cs` (single file, ~124 KB src) | `ClutterCutter-legacy.exe` (~70 KB) | Frozen; kept for reference, lacks the redesign/new features |
 
-The Rust port is the direction of travel: it's a faithful low-level Win32 port
-(no GUI framework) intended to eventually become the primary build. New feature
-work generally lands in the Rust port; keep behavior aligned with the C# app.
+The Rust port is now the primary build (a faithful low-level Win32 port, no GUI
+framework) and ships as `ClutterCutter.exe`; the original C# app is frozen and
+ships alongside as `ClutterCutter-legacy.exe`. New feature work lands in the Rust
+port. (This flipped in v0.9.1 — before that, C# was `ClutterCutter.exe` and the
+Rust build was `ClutterCutter-rust.exe`, which caused users to download the older
+C# build by mistake.)
 
 ## Repo map
 
@@ -268,7 +271,7 @@ strict SemVer.
   release was published by release-please (`GITHUB_TOKEN`) the workflow may not
   auto-start; run it from **Actions → winget manifest** with the version. Full
   steps + repo rules in `winget/README.md`. Packaged binary is
-  `ClutterCutter-rust.exe`, aliased to the `cluttercutter` command.
+  `ClutterCutter.exe` (the Rust build), aliased to the `cluttercutter` command.
 
 ## Code signing
 
@@ -286,7 +289,7 @@ One-time setup:
 1. Apply to the **SignPath Foundation** OSS program (signpath.org) and get an
    organization. Create a **project** for ClutterCutter, an **artifact
    configuration** that signs both `ClutterCutter.exe` and
-   `ClutterCutter-rust.exe`, and a **release signing policy**. Add **GitHub
+   `ClutterCutter-legacy.exe`, and a **release signing policy**. Add **GitHub
    Actions** as a trusted build system bound to `StruisICT/ClutterCutter`.
 2. In the GitHub repo → **Settings → Secrets and variables → Actions**, add:
    - **Secret:** `SIGNPATH_API_TOKEN`

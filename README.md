@@ -24,10 +24,10 @@ If ClutterCutter saves you time hunting down what's eating your disk, consider [
 
 ## Download
 
-Pre-built binaries are attached to each [GitHub Release](https://github.com/StruisICT/ClutterCutter/releases). Two builds of the same app are attached — download whichever you prefer and run it; both are single self-contained files:
+Pre-built binaries are attached to each [GitHub Release](https://github.com/StruisICT/ClutterCutter/releases). Just grab **`ClutterCutter.exe`** and run it — it's a single self-contained file:
 
-- **`ClutterCutter.exe`** — the original C# build (needs the in-box .NET Framework 4 runtime, present on every modern Windows).
-- **`ClutterCutter-rust.exe`** — the Rust port (no runtime dependency). This is the build packaged for winget.
+- **`ClutterCutter.exe`** — **the app you want.** The Rust build (no runtime dependency), with the current UI and all features. This is the build packaged for winget.
+- **`ClutterCutter-legacy.exe`** — the original C# build, kept for reference only (needs the in-box .NET Framework 4 runtime). Older, minimal UI — most people should ignore this.
 
 ## Building from source
 

@@ -65,7 +65,7 @@ jobs:
           git commit -m "chore(winget): add manifest for v$v"
           git push -u origin $branch --force-with-lease
           $body = @(
-            "Auto-generated winget manifest set for the v$v release (schema 1.12.0; SHA256 from the published ClutterCutter-rust.exe asset).",
+            "Auto-generated winget manifest set for the v$v release (schema 1.12.0; SHA256 from the published ClutterCutter.exe asset).",
             "",
             "Review/refine the ReleaseNotes and Description, then -- when you choose to -- copy winget/manifests/s/StruisICT/ClutterCutter/$v/ into a microsoft/winget-pkgs fork and open that PR.",
             "",

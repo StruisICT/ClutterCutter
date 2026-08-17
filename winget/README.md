@@ -69,7 +69,8 @@ The per-version manifest folder is generated automatically. Right after a
 release is published, the **winget manifest** workflow
 (`.github/workflows/winget-manifest.yml`) runs
 [`scripts/Update-WingetManifest.ps1`](../scripts/Update-WingetManifest.ps1) — it
-downloads the published `ClutterCutter-rust.exe`, computes its SHA256, writes the
+downloads the published `ClutterCutter.exe` (the Rust build; it was
+`ClutterCutter-rust.exe` up to v0.9.0), computes its SHA256, writes the
 three 1.12.0 manifest files under `winget/manifests/.../<version>/`, and opens an
 **in-repo PR** adding them. It never touches `microsoft/winget-pkgs`.
 
@@ -94,7 +95,7 @@ Then, for the actual winget-pkgs submission:
 > Because we cut releases with [release-please](../README.md#releasing) under
 > SemVer, the winget `PackageVersion` is always a sortable `MAJOR.MINOR.PATCH`,
 > which keeps `winget upgrade` ordering correct. Submit the winget update only
-> **after** the GitHub Release (and its `ClutterCutter-rust.exe` asset) exists,
+> **after** the GitHub Release (and its `ClutterCutter.exe` asset) exists,
 > since the SHA256 is computed from the published asset.
 
 ## Notes
@@ -102,7 +103,7 @@ Then, for the actual winget-pkgs submission:
 - `InstallerType: portable` means winget downloads the exe, drops it under
   `%LOCALAPPDATA%\Microsoft\WinGet\Packages\...`, and adds it to `PATH` under
   the alias `cluttercutter`.
-- The packaged binary is `ClutterCutter-rust.exe` (the self-contained Rust
+- The packaged binary is `ClutterCutter.exe` (the self-contained Rust
   build), renamed by winget to match the `Commands` alias.
 - Licensed MIT (see `LICENSE` at repo root). The locale manifest declares
   `License: MIT` and `LicenseUrl` pointing at that file on `main`.
