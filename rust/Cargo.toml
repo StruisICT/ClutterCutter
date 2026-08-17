@@ -17,6 +17,11 @@ path = "src/bin/cli.rs"
 embed-resource = "3"
 
 [dependencies]
+
+# The Win32 bindings are only needed on Windows (native GUI, FindFirstFileExW,
+# MFT, temp discovery). Gating the dependency to cfg(windows) forces a clean
+# platform split: any code touching `windows::` must live behind #[cfg(windows)].
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
