@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/StruisICT/ClutterCutter/compare/v0.9.0...v0.9.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* ship the Rust build as the only ClutterCutter, drop legacy C# ([#73](https://github.com/StruisICT/ClutterCutter/issues/73)) ([108ede3](https://github.com/StruisICT/ClutterCutter/commit/108ede3046eaee416da182e9342c588dd7e0ed7f))
+
 ## [0.9.0](https://github.com/StruisICT/ClutterCutter/compare/v0.8.0...v0.9.0) (2026-08-13)
 
 
