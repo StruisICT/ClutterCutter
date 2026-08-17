@@ -73,39 +73,7 @@ jobs:
           # For workflow_dispatch with a tag input, build that tag. Otherwise use the trigger ref.
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.tag || github.ref }}
 
-      # ---------- C# build (legacy original, ships as ClutterCutter-legacy.exe) ----------
-
-      - name: Compile C# build with .NET Framework csc.exe
-        shell: pwsh
-        run: |
-          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-          if (-not (Test-Path $csc)) { throw "csc.exe not found at $csc" }
-          & $csc -nologo -target:winexe -optimize+ -platform:anycpu `
-            -reference:System.Windows.Forms.dll `
-            -reference:System.Drawing.dll `
-            -reference:System.dll `
-            -reference:System.Core.dll `
-            -reference:Microsoft.VisualBasic.dll `
-            -win32icon:ClutterCutter.ico `
-            -out:ClutterCutter-legacy.exe `
-            ClutterCutter.cs
-          if ($LASTEXITCODE -ne 0) { throw "csc.exe exited with $LASTEXITCODE" }
-          if (-not (Test-Path ClutterCutter-legacy.exe)) { throw "ClutterCutter-legacy.exe was not produced" }
-          $size = (Get-Item ClutterCutter-legacy.exe).Length
-          Write-Host "Built ClutterCutter-legacy.exe ($size bytes)"
-
-      - name: Smoke test C# build
-        shell: pwsh
-        run: |
-          $p = Start-Process -FilePath ".\ClutterCutter-legacy.exe" -PassThru
-          Start-Sleep -Seconds 3
-          if ($p.HasExited) {
-            throw "ClutterCutter-legacy.exe exited immediately with code $($p.ExitCode)"
-          }
-          Write-Host "C# build running: PID=$($p.Id) Title='$($p.MainWindowTitle)'"
-          Stop-Process -Id $p.Id -Force
-
-      # ---------- Rust port (primary build, ships as ClutterCutter.exe) ----------
+      # ---------- Rust port (the ClutterCutter app, ships as ClutterCutter.exe) ----------
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -129,9 +97,7 @@ jobs:
       - name: Stage Rust artifact
         shell: pwsh
         run: |
-          # The Rust port is the primary build and ships as ClutterCutter.exe. The
-          # legacy C# build ships alongside as ClutterCutter-legacy.exe, so there is
-          # no case-sensitivity collision at the repo root.
+          # The Rust port is the ClutterCutter app and ships as ClutterCutter.exe.
           Copy-Item rust/target/release/cluttercutter.exe -Destination ClutterCutter.exe -Force
 
       - name: Smoke test Rust build
@@ -154,7 +120,6 @@ jobs:
           name: ClutterCutter-${{ github.sha }}
           path: |
             ClutterCutter.exe
-            ClutterCutter-legacy.exe
           retention-days: 30
 
       # ---------- Code signing (SignPath Foundation — free, forever, for OSS) ----------
@@ -186,9 +151,8 @@ jobs:
         if: steps.sign.outcome == 'success'
         shell: pwsh
         run: |
-          Copy-Item signed/ClutterCutter.exe        -Destination ClutterCutter.exe        -Force
-          Copy-Item signed/ClutterCutter-legacy.exe -Destination ClutterCutter-legacy.exe -Force
-          Write-Host "Replaced root exes with the SignPath-signed versions."
+          Copy-Item signed/ClutterCutter.exe -Destination ClutterCutter.exe -Force
+          Write-Host "Replaced the root exe with the SignPath-signed version."
 
       - name: Attach exes to GitHub Release
         if: |
@@ -199,6 +163,5 @@ jobs:
         with:
           files: |
             ClutterCutter.exe
-            ClutterCutter-legacy.exe
           fail_on_unmatched_files: true
           tag_name: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
