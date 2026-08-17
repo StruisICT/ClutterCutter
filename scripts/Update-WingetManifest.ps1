@@ -3,8 +3,9 @@
     Generate the winget manifest folder for a released version of ClutterCutter.
 
 .DESCRIPTION
-    Downloads the published ClutterCutter-rust.exe release asset, computes its
-    SHA256, and writes the three-file winget manifest set under
+    Downloads the published ClutterCutter.exe release asset (the Rust build,
+    primary as of v0.9.1; it was ClutterCutter-rust.exe up to v0.9.0), computes
+    its SHA256, and writes the three-file winget manifest set under
     winget/manifests/s/StruisICT/ClutterCutter/<Version>/ using schema 1.12.0.
 
     This only stages the manifest *in this repo*. It does NOT submit anything to
@@ -35,7 +36,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repo      = 'StruisICT/ClutterCutter'
-$asset     = 'ClutterCutter-rust.exe'
+$asset     = 'ClutterCutter.exe'
 $assetUrl  = "https://github.com/$repo/releases/download/$Tag/$asset"
 $notesUrl  = "https://github.com/$repo/releases/tag/$Tag"
 

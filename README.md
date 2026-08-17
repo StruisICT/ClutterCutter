@@ -2,7 +2,7 @@
 
 A lightweight Windows disk-usage browser built and maintained by **Struis ICT**.
 
-Single self-contained native `.exe`, no installer. The C# build needs only the in-box .NET Framework 4 runtime; the Rust build (packaged for winget) has no runtime dependency at all.
+Single self-contained native `.exe`, no installer. Built in Rust with no runtime dependency at all.
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/struis112)
 
@@ -24,45 +24,23 @@ If ClutterCutter saves you time hunting down what's eating your disk, consider [
 
 ## Download
 
-Pre-built binaries are attached to each [GitHub Release](https://github.com/StruisICT/ClutterCutter/releases). Two builds of the same app are attached — download whichever you prefer and run it; both are single self-contained files:
-
-- **`ClutterCutter.exe`** — the original C# build (needs the in-box .NET Framework 4 runtime, present on every modern Windows).
-- **`ClutterCutter-rust.exe`** — the Rust port (no runtime dependency). This is the build packaged for winget.
+Pre-built binaries are attached to each [GitHub Release](https://github.com/StruisICT/ClutterCutter/releases). Just grab **`ClutterCutter.exe`** and run it — it's a single self-contained file with no runtime dependency, sporting the current UI and all features. This is the build packaged for winget.
 
 ## Building from source
 
-ClutterCutter ships as two implementations of the same app — the original **C#** build and an ongoing **Rust port**. CI builds both on every push. Contributors should read [`AGENTS.md`](AGENTS.md) for the full dev workflow, architecture, and conventions.
-
-### C# build
-
-You only need a Windows machine. The .NET Framework 4 C# compiler ships with Windows; no Visual Studio or .NET SDK install required.
-
-```powershell
-& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
-    -nologo -target:winexe -optimize+ -platform:anycpu `
-    -reference:System.Windows.Forms.dll `
-    -reference:System.Drawing.dll `
-    -reference:System.dll `
-    -reference:System.Core.dll `
-    -reference:Microsoft.VisualBasic.dll `
-    -win32icon:ClutterCutter.ico `
-    -out:ClutterCutter.exe `
-    ClutterCutter.cs
-```
-
-### Rust build
+ClutterCutter is a Rust application; CI builds it on every push. Contributors should read [`AGENTS.md`](AGENTS.md) for the full dev workflow, architecture, and conventions.
 
 Needs the Rust stable toolchain.
 
 ```powershell
 cd rust
-cargo build --release   # -> rust/target/release/cluttercutter.exe
+cargo build --release   # -> rust/target/release/cluttercutter.exe (shipped as ClutterCutter.exe)
 ```
 
-There's also a console harness for testing the scanners without the GUI, e.g.
-`cargo run --bin cluttercutter-cli -- --top-n 20 C:\Users` (full flag list in `AGENTS.md`).
+There's also a cross-platform console harness for testing the scanners without the GUI, e.g.
+`cargo run --bin cluttercutter-cli -- --top-n 20 C:\Users` (full flag list in `AGENTS.md`). The native GUI is Windows-only today; Linux support for the scan core is in progress.
 
-GitHub Actions reproduces both builds on every push (`.github/workflows/build.yml`).
+GitHub Actions reproduces the build on every push (`.github/workflows/build.yml`).
 
 ## Releasing
 
