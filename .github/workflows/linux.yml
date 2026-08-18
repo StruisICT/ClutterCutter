@@ -1,0 +1,83 @@
+name: Linux
+
+# Builds the cross-platform Rust frontends (egui GUI + CLI) on Linux and
+# uploads a tarball artifact. The Windows build lives in build.yml; this proves
+# the portable scan core + egui app compile and run on Linux and produces a
+# downloadable Linux binary.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build & attach Linux binaries to its Release (e.g. v0.9.2). Leave blank to just build.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    name: Build (Linux)
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.tag || github.ref }}
+
+      # winit (x11/wayland), glow (OpenGL) and arboard (clipboard) need these
+      # system libraries to build/link on Linux.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libgl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Test (portable core)
+        run: cargo test --lib
+
+      - name: Build release binaries
+        run: cargo build --release --bin cluttercutter-gui --bin cluttercutter-cli
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp target/release/cluttercutter-gui dist/
+          cp target/release/cluttercutter-cli dist/
+          tar -C dist -czf dist/ClutterCutter-linux-x86_64.tar.gz \
+            cluttercutter-gui cluttercutter-cli
+          ls -la dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClutterCutter-linux-${{ github.sha }}
+          path: rust/dist/ClutterCutter-linux-x86_64.tar.gz
+          retention-days: 30
+
+      - name: Attach to Release
+        if: >-
+          github.event_name == 'workflow_dispatch' && inputs.tag != '' ||
+          startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rust/dist/ClutterCutter-linux-x86_64.tar.gz
+          tag_name: ${{ inputs.tag || github.ref_name }}
