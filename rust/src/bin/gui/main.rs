@@ -11,8 +11,9 @@ mod palette;
 
 use cluttercutter::drives::{self, DriveInfo};
 use cluttercutter::format::format_bytes;
-use cluttercutter::types::{FolderNode, ScanProgress};
+use cluttercutter::types::{FileEntry, FolderNode, ScanProgress};
 use cluttercutter::walk::WalkScanner;
+use cluttercutter::{analysis, datetime};
 use eframe::egui::{self, CornerRadius, FontId, Sense, Stroke};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -39,6 +40,23 @@ enum ScanMsg {
     Done(Box<FolderNode>),
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum View {
+    Browse,
+    Largest,
+    Oldest,
+}
+
+// A navigation intent recorded during rendering, applied after the borrow of
+// the scan tree is released.
+enum NavAction {
+    Drill(usize),
+    Up,
+    Back,
+    Fwd,
+    Crumb(usize),
+}
+
 struct App {
     dark: bool,
     drives: Vec<DriveInfo>,
@@ -57,6 +75,15 @@ struct App {
     // CC_SCAN=<path>: auto-scan a path on launch (dev/screenshot helper).
     auto_scan: Option<String>,
     shot_requested: bool,
+    // Navigation into the scanned tree: `cur` is the child-index path from root;
+    // back/fwd are history stacks.
+    cur: Vec<usize>,
+    back: Vec<Vec<usize>>,
+    fwd: Vec<Vec<usize>>,
+    view: View,
+    search: String,
+    // CC_SEARCH=<query>: apply an initial search once the auto-scan lands (dev).
+    pending_search: Option<String>,
 }
 
 impl App {
@@ -75,6 +102,49 @@ impl App {
             frame: 0,
             auto_scan: std::env::var("CC_SCAN").ok(),
             shot_requested: false,
+            cur: Vec::new(),
+            back: Vec::new(),
+            fwd: Vec::new(),
+            view: View::Browse,
+            search: String::new(),
+            pending_search: std::env::var("CC_SEARCH").ok(),
+        }
+    }
+
+    fn apply_nav(&mut self, a: Option<NavAction>) {
+        let Some(a) = a else {
+            return;
+        };
+        match a {
+            NavAction::Drill(i) => {
+                self.back.push(self.cur.clone());
+                self.fwd.clear();
+                self.cur.push(i);
+            }
+            NavAction::Up => {
+                if !self.cur.is_empty() {
+                    self.back.push(self.cur.clone());
+                    self.fwd.clear();
+                    self.cur.pop();
+                }
+            }
+            NavAction::Back => {
+                if let Some(p) = self.back.pop() {
+                    self.fwd.push(std::mem::replace(&mut self.cur, p));
+                }
+            }
+            NavAction::Fwd => {
+                if let Some(p) = self.fwd.pop() {
+                    self.back.push(std::mem::replace(&mut self.cur, p));
+                }
+            }
+            NavAction::Crumb(k) => {
+                if k < self.cur.len() {
+                    self.back.push(self.cur.clone());
+                    self.fwd.clear();
+                    self.cur.truncate(k);
+                }
+            }
         }
     }
 
@@ -138,6 +208,7 @@ impl App {
             let node = WalkScanner::new()
                 .with_cancel(cancel)
                 .with_size_hint(hint)
+                .with_track_files(true)
                 .with_progress(Box::new(move |p: &ScanProgress| {
                     let _ = ptx.send(ScanMsg::Progress(p.clone()));
                 }))
@@ -156,6 +227,12 @@ impl App {
                     ScanMsg::Progress(p) => self.progress = Some(p),
                     ScanMsg::Done(node) => {
                         self.root = Some(*node);
+                        // Reset navigation/view/search for the new tree.
+                        self.cur.clear();
+                        self.back.clear();
+                        self.fwd.clear();
+                        self.view = View::Browse;
+                        self.search = self.pending_search.take().unwrap_or_default();
                         done = true;
                     }
                 }
@@ -262,25 +339,173 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(16)),
             )
             .show(ui, |ui| {
-                if self.scanning {
-                    self.show_scanning(ui, &pal);
-                } else if let Some(root) = &self.root {
-                    show_listing(ui, root, &pal);
-                } else {
-                    ui.add_space(40.0);
-                    ui.vertical_centered(|ui| {
-                        ui.label(
-                            egui::RichText::new("Select a drive to scan")
-                                .color(pal.subtext)
-                                .size(16.0),
-                        );
-                    });
-                }
+                self.show_central(ui, &pal);
             });
     }
 }
 
 impl App {
+    fn show_central(&mut self, ui: &mut egui::Ui, pal: &palette::Pal) {
+        if self.scanning {
+            self.show_scanning(ui, pal);
+            return;
+        }
+        if self.root.is_none() {
+            ui.add_space(40.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new("Select a drive to scan")
+                        .color(pal.subtext)
+                        .size(16.0),
+                );
+            });
+            return;
+        }
+
+        // Collect navigation/view/search changes while the tree is borrowed,
+        // then apply them after the borrow is released.
+        let mut nav: Option<NavAction> = None;
+        let mut new_view = self.view;
+        let mut new_search = self.search.clone();
+
+        {
+            let root = self.root.as_ref().unwrap();
+            let cur_node = node_at(root, &self.cur);
+
+            // toolbar: nav buttons + breadcrumb
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!self.back.is_empty(), egui::Button::new("Back"))
+                    .clicked()
+                {
+                    nav = Some(NavAction::Back);
+                }
+                if ui
+                    .add_enabled(!self.fwd.is_empty(), egui::Button::new("Fwd"))
+                    .clicked()
+                {
+                    nav = Some(NavAction::Fwd);
+                }
+                if ui
+                    .add_enabled(!self.cur.is_empty(), egui::Button::new("Up"))
+                    .clicked()
+                {
+                    nav = Some(NavAction::Up);
+                }
+                ui.separator();
+                if ui
+                    .link(egui::RichText::new(&root.name).color(pal.blue))
+                    .clicked()
+                {
+                    nav = Some(NavAction::Crumb(0));
+                }
+                let mut node = root;
+                for (depth, &idx) in self.cur.iter().enumerate() {
+                    if let Some(child) = node.children.get(idx) {
+                        ui.label(egui::RichText::new("/").color(pal.subtext));
+                        let is_last = depth + 1 == self.cur.len();
+                        if is_last {
+                            ui.label(egui::RichText::new(&child.name).color(pal.text).strong());
+                        } else if ui
+                            .link(egui::RichText::new(&child.name).color(pal.blue))
+                            .clicked()
+                        {
+                            nav = Some(NavAction::Crumb(depth + 1));
+                        }
+                        node = child;
+                    }
+                }
+            });
+
+            // view tabs + search
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut new_view, View::Browse, "Browse");
+                ui.selectable_value(&mut new_view, View::Largest, "Largest files");
+                ui.selectable_value(&mut new_view, View::Oldest, "Oldest files");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("×").on_hover_text("Clear search").clicked() {
+                        new_search.clear();
+                    }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut new_search)
+                            .hint_text("Search all files…")
+                            .desired_width(220.0),
+                    );
+                });
+            });
+            ui.add_space(4.0);
+
+            ui.label(
+                egui::RichText::new(format!(
+                    "{}  ·  {}  ·  {} files",
+                    cur_node.full_path,
+                    format_bytes(cur_node.size),
+                    cur_node.file_count
+                ))
+                .color(pal.subtext)
+                .size(12.0),
+            );
+            ui.add_space(6.0);
+
+            let terms: Vec<String> = new_search
+                .split_whitespace()
+                .map(str::to_lowercase)
+                .collect();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                if !terms.is_empty() {
+                    let mut hits: Vec<Hit> = Vec::new();
+                    collect_search(root, &terms, &mut hits, 500);
+                    hits.sort_by_key(|h| std::cmp::Reverse(h.size));
+                    if hits.is_empty() {
+                        ui.label(egui::RichText::new("No matches").color(pal.subtext));
+                    }
+                    for h in &hits {
+                        file_row(ui, &h.path, format_bytes(h.size), h.is_dir, pal);
+                    }
+                } else {
+                    match new_view {
+                        View::Browse => {
+                            let total = cur_node.size.max(1) as f64;
+                            let mut kids: Vec<(usize, &FolderNode)> =
+                                cur_node.children.iter().enumerate().collect();
+                            kids.sort_by_key(|(_, k)| std::cmp::Reverse(k.size));
+                            for (idx, k) in kids {
+                                let frac = (k.size as f64 / total) as f32;
+                                if list_row(ui, &k.name, frac, format_bytes(k.size), true, pal)
+                                    .double_clicked()
+                                {
+                                    nav = Some(NavAction::Drill(idx));
+                                }
+                            }
+                            let mut files: Vec<&FileEntry> = cur_node.files.iter().collect();
+                            files.sort_by_key(|f| std::cmp::Reverse(f.size));
+                            for f in files {
+                                let frac = (f.size as f64 / total) as f32;
+                                list_row(ui, &f.name, frac, format_bytes(f.size), false, pal);
+                            }
+                        }
+                        View::Largest => {
+                            for h in analysis::top_n_files(root, 300) {
+                                file_row(ui, &hit_path(&h), format_bytes(h.file.size), false, pal);
+                            }
+                        }
+                        View::Oldest => {
+                            for h in analysis::oldest_n_files(root, 300) {
+                                let d = datetime::short_date(h.file.last_modified_ft);
+                                let label = format!("{d}   {}", hit_path(&h));
+                                file_row(ui, &label, format_bytes(h.file.size), false, pal);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        self.view = new_view;
+        self.search = new_search;
+        self.apply_nav(nav);
+    }
+
     fn show_scanning(&self, ui: &mut egui::Ui, pal: &palette::Pal) {
         let p = self.progress.clone().unwrap_or_default();
         ui.add_space(30.0);
@@ -396,54 +621,131 @@ fn drive_card(
     resp
 }
 
-// The scanned root's immediate children, largest first, each with a
-// %-of-parent bar (green) and a size badge (blue).
-fn show_listing(ui: &mut egui::Ui, root: &FolderNode, pal: &palette::Pal) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(&root.name)
-                .color(pal.text)
-                .size(16.0)
-                .strong(),
-        );
-        ui.label(
-            egui::RichText::new(format!(
-                "· {} · {} files",
-                format_bytes(root.size),
-                root.file_count
-            ))
-            .color(pal.subtext),
-        );
-    });
-    ui.add_space(10.0);
-
-    let mut kids: Vec<&FolderNode> = root.children.iter().collect();
-    kids.sort_by_key(|k| std::cmp::Reverse(k.size));
-    let total = root.size.max(1) as f64;
-
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for k in kids {
-            let frac = (k.size as f64 / total) as f32;
-            list_row(ui, &k.name, frac, format_bytes(k.size), pal);
-        }
-    });
+// A search hit: a file or folder whose name matched every query term.
+struct Hit {
+    path: String,
+    size: i64,
+    is_dir: bool,
 }
 
-fn list_row(ui: &mut egui::Ui, name: &str, frac: f32, size: String, pal: &palette::Pal) {
+// Walk the drill path (child indices) to the current node, clamping on any bad
+// index (the tree never changes after a scan, so this normally can't miss).
+fn node_at<'a>(root: &'a FolderNode, path: &[usize]) -> &'a FolderNode {
+    let mut n = root;
+    for &i in path {
+        match n.children.get(i) {
+            Some(c) => n = c,
+            None => break,
+        }
+    }
+    n
+}
+
+fn name_matches(name: &str, terms: &[String]) -> bool {
+    let lower = name.to_lowercase();
+    terms.iter().all(|t| lower.contains(t))
+}
+
+// Recursively gather files/folders whose name matches every term (space = AND),
+// capped at `limit` hits.
+fn collect_search(node: &FolderNode, terms: &[String], out: &mut Vec<Hit>, limit: usize) {
+    for f in &node.files {
+        if out.len() >= limit {
+            return;
+        }
+        if name_matches(&f.name, terms) {
+            out.push(Hit {
+                path: join_native(&node.full_path, &f.name),
+                size: f.size,
+                is_dir: false,
+            });
+        }
+    }
+    for c in &node.children {
+        if out.len() >= limit {
+            return;
+        }
+        if name_matches(&c.name, terms) {
+            out.push(Hit {
+                path: c.full_path.clone(),
+                size: c.size,
+                is_dir: true,
+            });
+        }
+        collect_search(c, terms, out, limit);
+    }
+}
+
+fn join_native(dir: &str, name: &str) -> String {
+    std::path::Path::new(dir)
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn hit_path(h: &analysis::FileHit<'_>) -> String {
+    join_native(&h.folder.full_path, &h.file.name)
+}
+
+// A path row (no %-bar): path text (left, tail-truncated) + size badge (right).
+// Used by the Largest/Oldest/Search views.
+fn file_row(
+    ui: &mut egui::Ui,
+    text: &str,
+    size: String,
+    is_dir: bool,
+    pal: &palette::Pal,
+) -> egui::Response {
     let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 30.0), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 26.0), Sense::click());
     let p = ui.painter();
     if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(5), pal.card_bg);
     }
     let pad = 8.0;
-    // name (left)
     p.text(
         rect.left_center() + egui::vec2(pad, 0.0),
         egui::Align2::LEFT_CENTER,
+        shorten(text, 84),
+        FontId::proportional(13.0),
+        // folders (dirs) get strong text, files muted
+        if is_dir { pal.text } else { pal.subtext },
+    );
+    p.text(
+        rect.right_center() + egui::vec2(-pad, 0.0),
+        egui::Align2::RIGHT_CENTER,
+        size,
+        FontId::proportional(13.0),
+        pal.blue,
+    );
+    resp
+}
+
+// A browse row: [chevron for folders] name + %-of-parent bar (green) + size
+// badge (blue). Folders are drillable via double-click (caller checks the
+// returned Response).
+fn list_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    frac: f32,
+    size: String,
+    is_folder: bool,
+    pal: &palette::Pal,
+) -> egui::Response {
+    let width = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 30.0), Sense::click());
+    let p = ui.painter();
+    if resp.hovered() {
+        p.rect_filled(rect, CornerRadius::same(5), pal.card_bg);
+    }
+    let pad = 8.0;
+    // name (left) — folders in strong text, files muted
+    p.text(
+        rect.left_center() + egui::vec2(pad + 2.0, 0.0),
+        egui::Align2::LEFT_CENTER,
         name,
         FontId::proportional(13.5),
-        pal.text,
+        if is_folder { pal.text } else { pal.subtext },
     );
     // size badge (right)
     p.text(
@@ -465,6 +767,7 @@ fn list_row(ui: &mut egui::Ui, name: &str, frac: f32, size: String, pal: &palett
             egui::Rect::from_min_size(bar.min, egui::vec2(bar.width() * frac.clamp(0.0, 1.0), 6.0));
         p.rect_filled(fill, CornerRadius::same(3), pal.green);
     }
+    resp
 }
 
 fn shorten(s: &str, max: usize) -> String {
