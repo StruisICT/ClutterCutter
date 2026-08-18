@@ -10,10 +10,10 @@
 mod palette;
 
 use cluttercutter::drives::{self, DriveInfo};
-use cluttercutter::format::format_bytes;
+use cluttercutter::format::{format_bytes, set_binary_units};
 use cluttercutter::types::{FileEntry, FolderNode, ScanProgress};
 use cluttercutter::walk::WalkScanner;
-use cluttercutter::{analysis, datetime};
+use cluttercutter::{analysis, datetime, tempscan};
 use eframe::egui::{self, CornerRadius, FontId, Sense, Stroke};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -84,6 +84,10 @@ struct App {
     search: String,
     // CC_SEARCH=<query>: apply an initial search once the auto-scan lands (dev).
     pending_search: Option<String>,
+    // Extra scan sources + settings.
+    temp_roots: Vec<tempscan::TempRoot>,
+    path_input: String,
+    binary_units: bool,
 }
 
 impl App {
@@ -108,6 +112,9 @@ impl App {
             view: View::Browse,
             search: String::new(),
             pending_search: std::env::var("CC_SEARCH").ok(),
+            temp_roots: tempscan::temp_locations(),
+            path_input: String::new(),
+            binary_units: true,
         }
     }
 
@@ -265,6 +272,9 @@ impl eframe::App for App {
         self.drain(&ctx);
         self.handle_shot(&ctx);
         let pal = palette::palette(self.dark);
+        // A scan requested this frame (folder box or a temp/cache entry), applied
+        // after the panels so we never re-borrow self mid-closure.
+        let mut scan_request: Option<String> = None;
 
         // ---- top bar ----
         egui::Panel::top("topbar")
@@ -293,6 +303,32 @@ impl eframe::App for App {
                             self.dark = !self.dark;
                             self.styled = false;
                         }
+                        let units = if self.binary_units { "1024" } else { "1000" };
+                        if ui
+                            .button(units)
+                            .on_hover_text("Toggle binary (1024) / decimal (1000) units")
+                            .clicked()
+                        {
+                            self.binary_units = !self.binary_units;
+                            set_binary_units(self.binary_units);
+                        }
+                        if ui.button("Scan folder").clicked() {
+                            let p = self.path_input.trim().to_string();
+                            if !p.is_empty() {
+                                scan_request = Some(p);
+                            }
+                        }
+                        let te = ui.add(
+                            egui::TextEdit::singleline(&mut self.path_input)
+                                .hint_text("Folder path…")
+                                .desired_width(220.0),
+                        );
+                        if te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            let p = self.path_input.trim().to_string();
+                            if !p.is_empty() {
+                                scan_request = Some(p);
+                            }
+                        }
                     });
                 });
             });
@@ -301,6 +337,11 @@ impl eframe::App for App {
         let mut clicked: Option<usize> = None;
         let drives = self.drives.clone();
         let selected = self.selected;
+        let temp_roots: Vec<(String, String)> = self
+            .temp_roots
+            .iter()
+            .map(|t| (t.label.clone(), t.path.clone()))
+            .collect();
         egui::Panel::left("drives")
             .exact_size(232.0)
             .resizable(false)
@@ -326,9 +367,32 @@ impl eframe::App for App {
                 if drives.is_empty() {
                     ui.label(egui::RichText::new("No drives found").color(pal.subtext));
                 }
+                if !temp_roots.is_empty() {
+                    ui.add_space(16.0);
+                    ui.label(
+                        egui::RichText::new("TEMP / CACHES")
+                            .color(pal.subtext)
+                            .size(12.0)
+                            .strong(),
+                    );
+                    ui.add_space(6.0);
+                    let w = ui.available_width();
+                    for (label, path) in &temp_roots {
+                        if ui
+                            .add_sized([w, 26.0], egui::Button::new(label))
+                            .on_hover_text(path.as_str())
+                            .clicked()
+                        {
+                            scan_request = Some(path.clone());
+                        }
+                    }
+                }
             });
         if let Some(i) = clicked {
             self.start_scan(i);
+        } else if let Some(p) = scan_request {
+            self.selected = None;
+            self.scan_path(p, 0);
         }
 
         // ---- central content ----

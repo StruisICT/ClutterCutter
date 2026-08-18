@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod datetime;
 pub mod drives;
 pub mod format;
+pub mod tempscan;
 pub mod types;
 pub mod walk;
 
