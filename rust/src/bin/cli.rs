@@ -1,10 +1,18 @@
 // Console driver — invokes the scanner modules from the lib crate. Useful for
-// validating the scanners independently of the GUI.
+// validating the scanners independently of the GUI, and it's the first
+// cross-platform frontend: on Windows it can use the native FindFirstFileEx
+// walker or the NTFS MFT fast path; on Linux/macOS it uses the portable
+// std::fs walker.
 
-use cluttercutter::{analysis, mft, scanner, temp, types};
+use cluttercutter::{analysis, datetime, types};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
+
+#[cfg(not(windows))]
+use cluttercutter::walk;
+#[cfg(windows)]
+use cluttercutter::{mft, scanner};
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -42,7 +50,10 @@ fn main() {
     }
 
     if temp_mode {
+        #[cfg(windows)]
         run_temp_scan();
+        #[cfg(not(windows))]
+        eprintln!("--temp (temp/cache discovery) is currently Windows-only.");
         return;
     }
 
@@ -51,14 +62,14 @@ fn main() {
         Some(p) => p,
         None => {
             eprintln!(
-                "usage: cluttercutter-cli.exe [--mft] [--top-n N] [--oldest-n N] <path>\n       cluttercutter-cli.exe --temp"
+                "usage: cluttercutter-cli [--mft] [--top-n N] [--oldest-n N] <path>\n       cluttercutter-cli --temp"
             );
             std::process::exit(2);
         }
     };
 
     let cancel = Arc::new(AtomicBool::new(false));
-    let progress: scanner::ProgressFn = Box::new(|p| {
+    let progress: Box<dyn Fn(&types::ScanProgress) + Send + Sync> = Box::new(|p| {
         eprint!(
             "\r  {:>8} files  {:>10}  {:>5}  {}",
             p.files_scanned,
@@ -73,19 +84,47 @@ fn main() {
     });
 
     let start = Instant::now();
-    let result = if use_mft {
-        mft::MftScanner::new()
-            .with_cancel(cancel.clone())
-            .with_progress(progress)
-            .with_track_files(track_files)
-            .scan(&root)
-    } else {
-        scanner::Scanner::new()
-            .with_cancel(cancel.clone())
-            .with_progress(progress)
-            .with_track_files(track_files)
-            .scan(&root)
-            .map_err(|s| s.to_string())
+    let (result, backend): (Result<types::FolderNode, String>, &str) = {
+        #[cfg(windows)]
+        {
+            if use_mft {
+                (
+                    mft::MftScanner::new()
+                        .with_cancel(cancel.clone())
+                        .with_progress(progress)
+                        .with_track_files(track_files)
+                        .scan(&root),
+                    "MFT",
+                )
+            } else {
+                (
+                    scanner::Scanner::new()
+                        .with_cancel(cancel.clone())
+                        .with_progress(progress)
+                        .with_track_files(track_files)
+                        .scan(&root)
+                        .map_err(|s| s.to_string()),
+                    "walker",
+                )
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if use_mft {
+                eprintln!(
+                    "note: --mft (NTFS MFT fast path) is Windows-only; using the portable walker."
+                );
+            }
+            (
+                walk::WalkScanner::new()
+                    .with_cancel(cancel.clone())
+                    .with_progress(progress)
+                    .with_track_files(track_files)
+                    .scan(&root)
+                    .map_err(|s| s.to_string()),
+                "walker",
+            )
+        }
     };
     let elapsed = start.elapsed();
     eprintln!();
@@ -105,7 +144,7 @@ fn main() {
         root.file_count,
         root.folder_count,
         elapsed.as_secs_f64(),
-        if use_mft { "MFT" } else { "walker" },
+        backend,
     );
 
     let printed_special = top_n > 0 || oldest_n > 0;
@@ -122,7 +161,7 @@ fn main() {
         let hits = analysis::oldest_n_files(&root, oldest_n);
         for h in &hits {
             let full = full_path(h);
-            let date = format_short_date(h.file.last_modified_ft);
+            let date = datetime::short_date(h.file.last_modified_ft);
             println!("  {date}  {:>10}  {full}", fmt_bytes(h.file.size));
         }
     }
@@ -135,7 +174,9 @@ fn main() {
     }
 }
 
+#[cfg(windows)]
 fn run_temp_scan() {
+    use cluttercutter::temp;
     let locations = temp::discover_locations();
     if locations.is_empty() {
         eprintln!("No temp locations discovered.");
@@ -160,7 +201,7 @@ fn run_temp_scan() {
     );
     println!("\nTop 30 by size:");
     for e in entries.iter().take(30) {
-        let date = format_short_date(e.last_modified_ft);
+        let date = datetime::short_date(e.last_modified_ft);
         println!(
             "  {date}  {:>10}  [{}]  {}",
             fmt_bytes(e.size),
@@ -170,33 +211,13 @@ fn run_temp_scan() {
     }
 }
 
+// Join an owning folder path with a leaf file name using the platform's native
+// separator (backslash on Windows, slash elsewhere).
 fn full_path(h: &analysis::FileHit<'_>) -> String {
-    if h.folder.full_path.ends_with('\\') {
-        format!("{}{}", h.folder.full_path, h.file.name)
-    } else {
-        format!("{}\\{}", h.folder.full_path, h.file.name)
-    }
-}
-
-// Quick yyyy-mm-dd formatter via Win32 FILETIME→SYSTEMTIME (UTC, no TZ shift —
-// good enough for a CLI debug view).
-fn format_short_date(raw: i64) -> String {
-    if raw == 0 {
-        return "          ".into();
-    }
-    use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
-    use windows::Win32::System::Time::FileTimeToSystemTime;
-    let ft = FILETIME {
-        dwLowDateTime: raw as u32,
-        dwHighDateTime: (raw >> 32) as u32,
-    };
-    let mut st = SYSTEMTIME::default();
-    unsafe {
-        if FileTimeToSystemTime(&ft, &mut st).is_err() {
-            return "          ".into();
-        }
-    }
-    format!("{:04}-{:02}-{:02}", st.wYear, st.wMonth, st.wDay)
+    std::path::Path::new(&h.folder.full_path)
+        .join(&h.file.name)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn fmt_bytes(n: i64) -> String {

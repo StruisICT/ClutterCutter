@@ -37,10 +37,21 @@ cd rust
 cargo build --release   # -> rust/target/release/cluttercutter.exe (shipped as ClutterCutter.exe)
 ```
 
-There's also a cross-platform console harness for testing the scanners without the GUI, e.g.
-`cargo run --bin cluttercutter-cli -- --top-n 20 C:\Users` (full flag list in `AGENTS.md`). The native GUI is Windows-only today; Linux support for the scan core is in progress.
+### Cross-platform build (Linux / macOS)
 
-GitHub Actions reproduces the build on every push (`.github/workflows/build.yml`).
+The native GUI above is Windows-only, but the same Rust codebase also builds a
+**portable egui frontend** and a console tool that run on Linux and macOS:
+
+```sh
+cd rust
+cargo run --bin cluttercutter-gui                  # portable GUI (drives, browse, largest/oldest, search, temp)
+cargo run --bin cluttercutter-cli -- --top-n 20 ~  # console harness (full flags in AGENTS.md)
+```
+
+Both share the exact scan engine of the Windows app; on Linux/macOS they use a
+portable `std::fs` walker (the Windows build keeps the faster NTFS-MFT path).
+GitHub Actions builds Windows (`build.yml`) and Linux (`linux.yml`) on every push
+— the Linux job uploads a `ClutterCutter-linux-x86_64` binary tarball.
 
 ## Releasing
 
