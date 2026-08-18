@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/StruisICT/ClutterCutter/compare/v0.9.2...v0.10.0) (2026-08-18)
+
+
+### Features
+
+* cross-platform egui frontend + portable Linux scan core ([#75](https://github.com/StruisICT/ClutterCutter/issues/75)) ([949ed69](https://github.com/StruisICT/ClutterCutter/commit/949ed693267731260d039598522d10393fe015da))
+
 ## [0.9.2](https://github.com/StruisICT/ClutterCutter/compare/v0.9.0...v0.9.2) (2026-08-17)
 
 
