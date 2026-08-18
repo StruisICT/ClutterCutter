@@ -13,10 +13,25 @@ path = "src/main.rs"
 name = "cluttercutter-cli"
 path = "src/bin/cli.rs"
 
+# Cross-platform egui frontend (Linux/macOS/Windows). Its own dir under src/bin
+# so it can carry submodules; only this binary links eframe.
+[[bin]]
+name = "cluttercutter-gui"
+path = "src/bin/gui/main.rs"
+
 [build-dependencies]
 embed-resource = "3"
 
 [dependencies]
+# glow (OpenGL) backend only — avoids the wgpu/DirectX dep tree. wayland+x11 are
+# no-ops on Windows but let the Linux build pick up both display servers.
+eframe = { version = "0.36.1", default-features = false, features = [
+    "glow",
+    "default_fonts",
+    "wayland",
+    "x11",
+] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # The Win32 bindings are only needed on Windows (native GUI, FindFirstFileExW,
 # MFT, temp discovery). Gating the dependency to cfg(windows) forces a clean
@@ -44,6 +59,9 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 opt-level = "z"
