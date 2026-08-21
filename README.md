@@ -26,6 +26,17 @@ If ClutterCutter saves you time hunting down what's eating your disk, consider [
 
 Pre-built binaries are attached to each [GitHub Release](https://github.com/StruisICT/ClutterCutter/releases). Just grab **`ClutterCutter.exe`** and run it — it's a single self-contained file with no runtime dependency, sporting the current UI and all features. This is the build packaged for winget.
 
+### Enterprise / network deployment (MSI)
+
+Each release also ships **`ClutterCutter.msi`** — a per-machine installer for admins rolling ClutterCutter out across a fleet (Group Policy software installation, SCCM/Intune, etc.):
+
+```powershell
+msiexec /i ClutterCutter.msi /qn        # silent, all-users install to Program Files
+msiexec /x ClutterCutter.msi /qn        # silent uninstall
+```
+
+It installs `ClutterCutter.exe` to `Program Files\ClutterCutter\`, adds an all-users Start Menu shortcut, and registers in Add/Remove Programs. Re-running a newer MSI upgrades in place. (Linux/macOS users want the portable build instead — see below.)
+
 ## Building from source
 
 ClutterCutter is a Rust application; CI builds it on every push. Contributors should read [`AGENTS.md`](AGENTS.md) for the full dev workflow, architecture, and conventions.
