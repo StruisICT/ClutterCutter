@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/StruisICT/ClutterCutter/compare/v0.10.0...v0.11.0) (2026-08-21)
+
+
+### Features
+
+* **gui:** polish the egui UI toward Win32 parity ([#77](https://github.com/StruisICT/ClutterCutter/issues/77)) ([c811d69](https://github.com/StruisICT/ClutterCutter/commit/c811d69b1fdf908418f7cf578c982c55e75bdec5))
+* MSI installer for enterprise/network deployment ([#78](https://github.com/StruisICT/ClutterCutter/issues/78)) ([cf5d325](https://github.com/StruisICT/ClutterCutter/commit/cf5d3256c35c41dc93b40e80ff233c9ce750fa43))
+
 ## [0.10.0](https://github.com/StruisICT/ClutterCutter/compare/v0.9.2...v0.10.0) (2026-08-18)
 
 
