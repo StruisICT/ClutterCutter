@@ -14,7 +14,7 @@ use cluttercutter::format::{format_bytes, set_binary_units};
 use cluttercutter::types::{FileEntry, FolderNode, ScanProgress};
 use cluttercutter::walk::WalkScanner;
 use cluttercutter::{analysis, datetime, tempscan};
-use eframe::egui::{self, CornerRadius, FontId, Sense, Stroke};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Sense, Stroke};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
@@ -93,7 +93,7 @@ struct App {
 impl App {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Self {
-            dark: false,
+            dark: std::env::var("CC_DARK").is_ok(),
             drives: drives::list_drives(),
             selected: None,
             scanning: false,
@@ -298,8 +298,12 @@ impl eframe::App for App {
                             .size(12.0),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let icon = if self.dark { "☀" } else { "🌙" };
-                        if ui.button(icon).on_hover_text("Toggle theme").clicked() {
+                        let icon = if self.dark { "Light" } else { "Dark" };
+                        if ui
+                            .button(icon)
+                            .on_hover_text("Toggle light / dark theme")
+                            .clicked()
+                        {
                             self.dark = !self.dark;
                             self.styled = false;
                         }
@@ -395,6 +399,36 @@ impl eframe::App for App {
             self.scan_path(p, 0);
         }
 
+        // ---- bottom status strip (brand blue, like the Win32 build) ----
+        let status = if self.scanning {
+            "Scanning…".to_string()
+        } else if let Some(root) = &self.root {
+            let n = node_at(root, &self.cur);
+            format!(
+                "{}    ·    {}    ·    {} files    ·    {} folders",
+                n.full_path,
+                format_bytes(n.size),
+                n.file_count,
+                n.folder_count
+            )
+        } else {
+            "Ready".to_string()
+        };
+        egui::Panel::bottom("status")
+            .exact_size(24.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(pal.blue)
+                    .inner_margin(egui::Margin::symmetric(12, 4)),
+            )
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(shorten_head(&status, 140))
+                        .color(Color32::WHITE)
+                        .size(12.0),
+                );
+            });
+
         // ---- central content ----
         egui::CentralPanel::default()
             .frame(
@@ -436,27 +470,19 @@ impl App {
             let root = self.root.as_ref().unwrap();
             let cur_node = node_at(root, &self.cur);
 
-            // toolbar: nav buttons + breadcrumb
+            // toolbar: icon nav buttons + breadcrumb
             ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(!self.back.is_empty(), egui::Button::new("Back"))
-                    .clicked()
-                {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if nav_button(ui, Arrow::Left, !self.back.is_empty(), pal).clicked() {
                     nav = Some(NavAction::Back);
                 }
-                if ui
-                    .add_enabled(!self.fwd.is_empty(), egui::Button::new("Fwd"))
-                    .clicked()
-                {
+                if nav_button(ui, Arrow::Right, !self.fwd.is_empty(), pal).clicked() {
                     nav = Some(NavAction::Fwd);
                 }
-                if ui
-                    .add_enabled(!self.cur.is_empty(), egui::Button::new("Up"))
-                    .clicked()
-                {
+                if nav_button(ui, Arrow::Up, !self.cur.is_empty(), pal).clicked() {
                     nav = Some(NavAction::Up);
                 }
-                ui.separator();
+                ui.add_space(6.0);
                 if ui
                     .link(egui::RichText::new(&root.name).color(pal.blue))
                     .clicked()
@@ -466,7 +492,7 @@ impl App {
                 let mut node = root;
                 for (depth, &idx) in self.cur.iter().enumerate() {
                     if let Some(child) = node.children.get(idx) {
-                        ui.label(egui::RichText::new("/").color(pal.subtext));
+                        crumb_sep(ui, pal);
                         let is_last = depth + 1 == self.cur.len();
                         if is_last {
                             ui.label(egui::RichText::new(&child.name).color(pal.text).strong());
@@ -480,12 +506,20 @@ impl App {
                     }
                 }
             });
+            ui.add_space(6.0);
 
-            // view tabs + search
+            // segmented view tabs + search
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut new_view, View::Browse, "Browse");
-                ui.selectable_value(&mut new_view, View::Largest, "Largest files");
-                ui.selectable_value(&mut new_view, View::Oldest, "Oldest files");
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if seg_tab(ui, "Browse", new_view == View::Browse, pal).clicked() {
+                    new_view = View::Browse;
+                }
+                if seg_tab(ui, "Largest files", new_view == View::Largest, pal).clicked() {
+                    new_view = View::Largest;
+                }
+                if seg_tab(ui, "Oldest files", new_view == View::Oldest, pal).clicked() {
+                    new_view = View::Oldest;
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("×").on_hover_text("Clear search").clicked() {
                         new_search.clear();
@@ -627,18 +661,24 @@ fn drive_card(
     } else {
         pal.card_bg
     };
-    p.rect_filled(rect, CornerRadius::same(8), bg);
+    p.rect_filled(rect, CornerRadius::same(10), bg);
     if selected {
         p.rect_stroke(
             rect,
-            CornerRadius::same(8),
+            CornerRadius::same(10),
             Stroke::new(1.5, pal.blue),
             egui::StrokeKind::Inside,
         );
+        // brand-blue left accent bar
+        let accent = egui::Rect::from_min_size(
+            rect.left_top() + egui::vec2(0.0, 8.0),
+            egui::vec2(3.0, rect.height() - 16.0),
+        );
+        p.rect_filled(accent, CornerRadius::same(2), pal.blue);
     } else {
         p.rect_stroke(
             rect,
-            CornerRadius::same(8),
+            CornerRadius::same(10),
             Stroke::new(1.0, pal.hairline),
             egui::StrokeKind::Inside,
         );
@@ -803,9 +843,24 @@ fn list_row(
         p.rect_filled(rect, CornerRadius::same(5), pal.card_bg);
     }
     let pad = 8.0;
+    // folder chevron (painted, so it renders on every platform's fonts)
+    if is_folder {
+        let c = rect.left_center() + egui::vec2(pad + 4.0, 0.0);
+        let r = 3.5;
+        p.add(egui::Shape::convex_polygon(
+            vec![
+                c + egui::vec2(-r * 0.6, -r),
+                c + egui::vec2(-r * 0.6, r),
+                c + egui::vec2(r * 0.9, 0.0),
+            ],
+            pal.subtext,
+            Stroke::NONE,
+        ));
+    }
     // name (left) — folders in strong text, files muted
+    let name_x = if is_folder { pad + 18.0 } else { pad + 2.0 };
     p.text(
-        rect.left_center() + egui::vec2(pad + 2.0, 0.0),
+        rect.left_center() + egui::vec2(name_x, 0.0),
         egui::Align2::LEFT_CENTER,
         name,
         FontId::proportional(13.5),
@@ -832,6 +887,129 @@ fn list_row(
         p.rect_filled(fill, CornerRadius::same(3), pal.green);
     }
     resp
+}
+
+#[derive(Clone, Copy)]
+enum Arrow {
+    Left,
+    Right,
+    Up,
+}
+
+// A small icon button with a painted arrow (Back / Forward / Up). Painting the
+// glyph ourselves avoids relying on a font that has the arrow characters.
+fn nav_button(
+    ui: &mut egui::Ui,
+    arrow: Arrow,
+    enabled: bool,
+    pal: &palette::Pal,
+) -> egui::Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 26.0), sense);
+    let p = ui.painter();
+    let bg = if enabled && resp.hovered() {
+        pal.card_sel
+    } else {
+        pal.card_bg
+    };
+    p.rect_filled(rect, CornerRadius::same(6), bg);
+    p.rect_stroke(
+        rect,
+        CornerRadius::same(6),
+        Stroke::new(1.0, pal.hairline),
+        egui::StrokeKind::Inside,
+    );
+    let c = rect.center();
+    let col = if enabled {
+        pal.text
+    } else {
+        pal.subtext.gamma_multiply(0.5)
+    };
+    let r = 4.0;
+    let pts = match arrow {
+        Arrow::Left => vec![
+            c + egui::vec2(r, -r),
+            c + egui::vec2(r, r),
+            c + egui::vec2(-r, 0.0),
+        ],
+        Arrow::Right => vec![
+            c + egui::vec2(-r, -r),
+            c + egui::vec2(-r, r),
+            c + egui::vec2(r, 0.0),
+        ],
+        Arrow::Up => vec![
+            c + egui::vec2(-r, r),
+            c + egui::vec2(r, r),
+            c + egui::vec2(0.0, -r),
+        ],
+    };
+    p.add(egui::Shape::convex_polygon(pts, col, Stroke::NONE));
+    resp
+}
+
+// A painted ">" breadcrumb separator (font-independent).
+fn crumb_sep(ui: &mut egui::Ui, pal: &palette::Pal) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 20.0), Sense::hover());
+    let p = ui.painter();
+    let c = rect.center();
+    let s = 3.0;
+    let col = pal.subtext;
+    p.line_segment(
+        [c + egui::vec2(-s * 0.5, -s), c + egui::vec2(s * 0.5, 0.0)],
+        Stroke::new(1.5, col),
+    );
+    p.line_segment(
+        [c + egui::vec2(s * 0.5, 0.0), c + egui::vec2(-s * 0.5, s)],
+        Stroke::new(1.5, col),
+    );
+}
+
+// A segmented-control tab: filled brand-blue when active, outlined otherwise.
+fn seg_tab(ui: &mut egui::Ui, label: &str, active: bool, pal: &palette::Pal) -> egui::Response {
+    let font = FontId::proportional(13.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), pal.text);
+    let w = galley.size().x + 22.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 28.0), Sense::click());
+    let p = ui.painter();
+    let bg = if active {
+        pal.blue
+    } else if resp.hovered() {
+        pal.card_sel
+    } else {
+        pal.card_bg
+    };
+    p.rect_filled(rect, CornerRadius::same(6), bg);
+    if !active {
+        p.rect_stroke(
+            rect,
+            CornerRadius::same(6),
+            Stroke::new(1.0, pal.hairline),
+            egui::StrokeKind::Inside,
+        );
+    }
+    p.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        font,
+        if active { Color32::WHITE } else { pal.text },
+    );
+    resp
+}
+
+// Truncate keeping the HEAD (for status paths where the drive/root matters most).
+fn shorten_head(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max - 1).collect();
+    format!("{head}…")
 }
 
 fn shorten(s: &str, max: usize) -> String {
