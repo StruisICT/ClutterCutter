@@ -154,7 +154,34 @@ jobs:
           Copy-Item signed/ClutterCutter.exe -Destination ClutterCutter.exe -Force
           Write-Host "Replaced the root exe with the SignPath-signed version."
 
-      - name: Attach exes to GitHub Release
+      # ---------- MSI installer (for admins deploying via GPO / SCCM / Intune) ----------
+      # Wraps the (signed, if enabled) ClutterCutter.exe into a per-machine MSI:
+      #   msiexec /i ClutterCutter.msi /qn   → silent all-users install.
+      # Uses a pinned WiX v3 (downloaded, not the runner's preinstalled tooling).
+      - name: Build MSI installer (WiX v3)
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name || inputs.tag || github.ref_name }}"
+          $ver = ($tag -replace '^v', '')
+          if ($ver -notmatch '^\d+\.\d+\.\d+') { $ver = '0.0.0' }  # untagged builds
+          Invoke-WebRequest -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' -OutFile wix.zip
+          Expand-Archive wix.zip -DestinationPath wixbin -Force
+          # Quote the -d<name>=<value> args so PowerShell passes them to candle intact.
+          & wixbin/candle.exe -nologo -arch x64 "-dVersion=$ver" "-dExeSource=ClutterCutter.exe" "-dIconSource=ClutterCutter.ico" msi/ClutterCutter.wxs -o cc.wixobj
+          if ($LASTEXITCODE -ne 0) { throw "candle (WiX compile) failed" }
+          & wixbin/light.exe -nologo "-sice:ICE38" "-sice:ICE43" "-sice:ICE57" cc.wixobj -o ClutterCutter.msi
+          if ($LASTEXITCODE -ne 0) { throw "light (WiX link) failed" }
+          if (-not (Test-Path ClutterCutter.msi)) { throw "ClutterCutter.msi was not produced" }
+          Write-Host "Built ClutterCutter.msi ($((Get-Item ClutterCutter.msi).Length) bytes) for v$ver"
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClutterCutter-msi-${{ github.sha }}
+          path: ClutterCutter.msi
+          retention-days: 30
+
+      - name: Attach exe + MSI to GitHub Release
         if: |
           github.event_name == 'release' ||
           (github.event_name == 'workflow_dispatch' && inputs.tag != '') ||
@@ -163,5 +190,6 @@ jobs:
         with:
           files: |
             ClutterCutter.exe
+            ClutterCutter.msi
           fail_on_unmatched_files: true
           tag_name: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}

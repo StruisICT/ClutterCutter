@@ -785,10 +785,9 @@ fn i64_le(b: &[u8], o: usize) -> i64 {
 }
 
 fn utf16le_to_string(bytes: &[u8]) -> String {
-    let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
+    // A trailing odd byte (if any) falls into the remainder and is ignored.
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let units: Vec<u16> = pairs.iter().map(|c| u16::from_le_bytes(*c)).collect();
     String::from_utf16_lossy(&units)
 }
 

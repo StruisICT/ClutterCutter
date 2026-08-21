@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v3 authoring for the ClutterCutter MSI. Produces a per-machine installer
+  that network admins can deploy silently (GPO software installation / SCCM /
+  Intune):  msiexec /i ClutterCutter.msi /qn
+  It installs ClutterCutter.exe into Program Files and adds an all-users Start
+  Menu shortcut. MajorUpgrade means re-running a newer MSI upgrades in place.
+
+  Built in CI (build.yml) with:
+    candle -arch x64 -dVersion=<x.y.z> -dExeSource=ClutterCutter.exe \
+           -dIconSource=ClutterCutter.ico msi/ClutterCutter.wxs -o cc.wixobj
+    light  cc.wixobj -o ClutterCutter.msi
+
+  The UpgradeCode below is STABLE across all versions — never change it, or
+  upgrades will stop working.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="ClutterCutter"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="Struis ICT"
+           UpgradeCode="FADE883B-0102-4A40-A367-3E96BD9692F7">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="ClutterCutter - fast disk-usage browser"
+             Comments="https://github.com/StruisICT/ClutterCutter" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ClutterCutter is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Add/Remove Programs metadata -->
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconSource)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/StruisICT/ClutterCutter" />
+    <Property Id="ARPURLINFOABOUT" Value="https://struisict.com" />
+
+    <Feature Id="Main" Title="ClutterCutter" Level="1">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="ClutterCutter">
+          <Component Id="MainExe" Guid="*">
+            <File Id="ClutterCutterExe"
+                  Source="$(var.ExeSource)"
+                  Name="ClutterCutter.exe"
+                  KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Component Id="StartMenuShortcut" Guid="B46C9096-58A8-4159-AD83-1E002A4230AB">
+          <Shortcut Id="StartMenuShortcut"
+                    Name="ClutterCutter"
+                    Description="Fast disk-usage browser"
+                    Target="[INSTALLFOLDER]ClutterCutter.exe"
+                    WorkingDirectory="INSTALLFOLDER"
+                    Icon="AppIcon.ico" />
+          <RemoveFolder Id="RemoveProgramMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKLM"
+                         Key="Software\StruisICT\ClutterCutter"
+                         Name="installed"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes" />
+        </Component>
+      </Directory>
+    </Directory>
+  </Product>
+</Wix>
