@@ -7,9 +7,10 @@
 //! it only points the user at winget or the releases page.
 
 use std::ffi::c_void;
+use std::sync::{Arc, Mutex};
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Networking::WinHttp::{
     WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders,
     WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption,
@@ -17,10 +18,13 @@ use windows::Win32::Networking::WinHttp::{
     WINHTTP_OPTION_DISABLE_FEATURE, WINHTTP_QUERY_LOCATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO, MESSAGEBOX_STYLE,
+    MessageBoxW, PostMessageW, IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO,
+    MESSAGEBOX_STYLE,
 };
 
 use crate::scanner::wide;
+
+use super::{SendHwnd, WM_APP_UPDATE_AVAILABLE};
 
 const HOST: PCWSTR = w!("github.com");
 const PATH: PCWSTR = w!("/StruisICT/ClutterCutter/releases/latest");
@@ -65,6 +69,66 @@ pub(crate) fn check_now() {
             }
         }
     });
+}
+
+/// Silent background update check, kicked off once at startup (gated by the
+/// `check_updates_on_launch` setting). Unlike [`check_now`] it shows no dialog:
+/// if a newer release exists that the user hasn't already dismissed, it stashes
+/// the bare version into `shared` and wakes the UI thread with
+/// `WM_APP_UPDATE_AVAILABLE`, which raises the non-modal banner. Any network
+/// failure is swallowed — a background check never nags.
+///
+/// `CC_FAKE_UPDATE=<ver>` forces the banner (skips the network + the
+/// already-seen gate) so the chrome can be screenshotted without a real release.
+pub(crate) fn check_in_background(
+    hwnd: HWND,
+    current: &'static str,
+    last_seen: String,
+    shared: Arc<Mutex<Option<String>>>,
+) {
+    let send = SendHwnd(hwnd.0 as isize);
+    std::thread::spawn(move || {
+        let (tag, forced) = match std::env::var("CC_FAKE_UPDATE") {
+            Ok(v) if !v.is_empty() => {
+                let t = if v.starts_with('v') {
+                    v
+                } else {
+                    format!("v{v}")
+                };
+                (Some(t), true)
+            }
+            _ => (fetch_latest_tag(), false),
+        };
+        let Some(tag) = tag else {
+            return;
+        };
+        let notify = if forced {
+            is_newer(&tag, current)
+        } else {
+            should_notify(&tag, current, &last_seen)
+        };
+        if notify {
+            let version = tag.trim_start_matches('v').to_string();
+            if let Ok(mut s) = shared.lock() {
+                *s = Some(version);
+            }
+            unsafe {
+                let _ = PostMessageW(
+                    send.to_hwnd(),
+                    WM_APP_UPDATE_AVAILABLE,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            }
+        }
+    });
+}
+
+/// Whether the startup check should raise the banner: `latest` must be a newer
+/// version than `current` AND not a version the user already saw/dismissed
+/// (tracked in the `last_update_seen` setting). Pure, so it's unit-tested.
+pub(crate) fn should_notify(latest: &str, current: &str, last_seen: &str) -> bool {
+    is_newer(latest, current) && latest.trim_start_matches('v') != last_seen.trim_start_matches('v')
 }
 
 unsafe fn msgbox(
@@ -196,7 +260,7 @@ fn is_newer(latest: &str, current: &str) -> bool {
 
 /// Open the releases page in the default browser. Fixed literal URL — nothing
 /// user- or network-derived reaches the shell.
-fn open_releases_page() {
+pub(crate) fn open_releases_page() {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     unsafe {
@@ -213,7 +277,7 @@ fn open_releases_page() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_newer, tag_from_location};
+    use super::{is_newer, should_notify, tag_from_location};
 
     #[test]
     fn extracts_tag_from_github_redirect() {
@@ -246,5 +310,20 @@ mod tests {
         assert!(!is_newer("v0.6.9", "0.7.0"));
         // Garbled parts count as zero, never panic.
         assert!(!is_newer("vnope", "0.7.0"));
+    }
+
+    #[test]
+    fn notify_only_for_newer_unseen_versions() {
+        // Newer and never seen -> notify.
+        assert!(should_notify("v0.12.0", "0.11.0", ""));
+        // Newer but already dismissed (stored bare) -> stay quiet.
+        assert!(!should_notify("v0.12.0", "0.11.0", "0.12.0"));
+        // A tag-form last_seen also matches (both sides strip the leading v).
+        assert!(!should_notify("v0.12.0", "0.11.0", "v0.12.0"));
+        // Not newer -> never notify, regardless of last_seen.
+        assert!(!should_notify("v0.11.0", "0.11.0", ""));
+        assert!(!should_notify("v0.10.0", "0.11.0", ""));
+        // Seen an older version, but an even newer one appears -> notify again.
+        assert!(should_notify("v0.13.0", "0.11.0", "0.12.0"));
     }
 }

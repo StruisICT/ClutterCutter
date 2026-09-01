@@ -15,9 +15,9 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, GetClientRect, GetCursorPos, GetWindowLongPtrW, GetWindowTextW, LoadCursorW,
-    MoveWindow, SendMessageW, SetCursor, GWLP_USERDATA, IDC_SIZEWE, WM_CLOSE, WM_COMMAND,
-    WM_DRAWITEM, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NOTIFY, WM_PAINT,
-    WM_SETCURSOR, WM_SIZE,
+    MoveWindow, PostMessageW, SendMessageW, SetCursor, GWLP_USERDATA, IDC_SIZEWE, WM_CLOSE,
+    WM_COMMAND, WM_DRAWITEM, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NOTIFY,
+    WM_PAINT, WM_SETCURSOR, WM_SIZE,
 };
 
 use crate::format::format_bytes;
@@ -30,7 +30,8 @@ use super::palette::{palette, ThemeMode};
 use super::{
     apply_side_view, delete_selected, draw_flat_button, layout, nav_up, on_command, on_notify,
     paint_panel_header, panel_layout, panel_view_buttons, toggle_detach, tree_item_lparam,
-    AppState, DRIVE_CARD_GAP, DRIVE_CARD_H, ID_DRIVE_BASE, PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
+    AppState, DRIVE_CARD_GAP, DRIVE_CARD_H, ID_BANNER_DISMISS, ID_BANNER_GET, ID_DRIVE_BASE,
+    PANEL_VIEW_BUTTONS, SIDEBAR_W, SPLIT_W,
 };
 
 // Bottom status strip: window-bg fill, a top hairline, a dark message on the
@@ -330,6 +331,133 @@ pub(crate) unsafe extern "system" fn crumb_proc(
                     WPARAM(TVGN_CARET as usize),
                     LPARAM(hti),
                 );
+            }
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// The "update available" banner strip below the top bar. A blue left accent +
+// hairlines frame a message ("ClutterCutter X is available — winget upgrade …")
+// with a blue "Get update" link and a "✕" dismiss on the right. Both hotspots
+// are recorded on paint and forwarded to the main window as WM_COMMAND. Only
+// shown (via layout()) when the startup check surfaced a newer version.
+pub(crate) unsafe extern "system" fn banner_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let app_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+    if app_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let app = &mut *app_ptr;
+    match msg {
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let p = palette(app.is_dark);
+
+            // Background + a blue left accent bar + top/bottom hairlines.
+            let bgb = CreateSolidBrush(COLORREF(p.card_bg));
+            FillRect(hdc, &rc, bgb);
+            let _ = DeleteObject(bgb);
+            let r = |l, t, ri, b| RECT {
+                left: l,
+                top: t,
+                right: ri,
+                bottom: b,
+            };
+            fill_rect(hdc, &r(0, 0, 4, rc.bottom), p.blue);
+            fill_rect(hdc, &r(0, 0, rc.right, 1), p.hairline);
+            fill_rect(hdc, &r(0, rc.bottom - 1, rc.right, rc.bottom), p.hairline);
+
+            SetBkMode(hdc, TRANSPARENT);
+            SelectObject(hdc, HGDIOBJ(app.font_small.0));
+            app.update_banner_hit.clear();
+
+            // Text width helper (single line).
+            let wpx = |s: &str| -> i32 {
+                let mut v: Vec<u16> = s.encode_utf16().collect();
+                let mut r = RECT::default();
+                DrawTextW(hdc, &mut v, &mut r, DT_CALCRECT | DT_SINGLELINE);
+                r.right - r.left
+            };
+            let draw_at = |s: &str, x: i32, w: i32, color: u32| {
+                let mut v: Vec<u16> = s.encode_utf16().collect();
+                let mut r = RECT {
+                    left: x,
+                    top: 0,
+                    right: x + w,
+                    bottom: rc.bottom,
+                };
+                SetTextColor(hdc, COLORREF(color));
+                DrawTextW(
+                    hdc,
+                    &mut v,
+                    &mut r,
+                    DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+                );
+            };
+
+            // Right-aligned actions: "Get update" then a "✕", laid out from the
+            // right so they never overlap the message.
+            let (get, dismiss) = ("Get update", "\u{2715}");
+            let (gw, dw) = (wpx(get), wpx(dismiss));
+            let gap = 18;
+            let dismiss_x = rc.right - 14 - dw;
+            let get_x = dismiss_x - gap - gw;
+            draw_at(get, get_x, gw, p.blue);
+            app.update_banner_hit.push((
+                RECT {
+                    left: get_x - 6,
+                    top: 0,
+                    right: get_x + gw + 6,
+                    bottom: rc.bottom,
+                },
+                ID_BANNER_GET as i32,
+            ));
+            draw_at(dismiss, dismiss_x, dw, p.subtext);
+            app.update_banner_hit.push((
+                RECT {
+                    left: dismiss_x - 6,
+                    top: 0,
+                    right: dismiss_x + dw + 8,
+                    bottom: rc.bottom,
+                },
+                ID_BANNER_DISMISS as i32,
+            ));
+
+            // Message on the left, clamped to the left of the actions.
+            let msg_x = 16;
+            let msg_w = (get_x - 20 - msg_x).max(40);
+            let text = format!(
+                "ClutterCutter {} is available  \u{2014}  winget upgrade StruisICT.ClutterCutter",
+                app.update_available_version
+            );
+            draw_at(&text, msg_x, msg_w, p.text);
+
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            for (r, id) in app.update_banner_hit.clone() {
+                if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+                    let _ = PostMessageW(
+                        app.main_hwnd,
+                        WM_COMMAND,
+                        WPARAM(id as u16 as usize),
+                        LPARAM(0),
+                    );
+                    break;
+                }
             }
             LRESULT(0)
         }
