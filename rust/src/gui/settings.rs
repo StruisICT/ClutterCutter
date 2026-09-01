@@ -45,10 +45,15 @@ pub(crate) struct Settings {
     pub units_binary: bool,
     pub default_side: SideView,
     pub scan_on_launch: bool,
+    pub check_updates_on_launch: bool,
     pub confirm_recycle: bool,
     pub show_sidebar: bool,
     pub show_system_files: bool,
     pub col_visible: [bool; 8],
+    // Bare version string of the newest release the user has already seen in the
+    // startup update banner; suppresses re-showing that same version. Empty until
+    // the first update is surfaced. The only string-valued key in settings.cfg.
+    pub last_update_seen: String,
 }
 
 impl Default for Settings {
@@ -59,10 +64,12 @@ impl Default for Settings {
             units_binary: true,
             default_side: SideView::TopFiles,
             scan_on_launch: true,
+            check_updates_on_launch: true,
             confirm_recycle: true,
             show_sidebar: true,
             show_system_files: false,
             col_visible: [true; 8],
+            last_update_seen: String::new(),
         }
     }
 }
@@ -107,6 +114,8 @@ pub(crate) fn load() -> Settings {
                 }
             }
             "scan_on_launch" => s.scan_on_launch = v != "0",
+            "check_updates_on_launch" => s.check_updates_on_launch = v != "0",
+            "last_update_seen" => s.last_update_seen = v.to_string(),
             "confirm_recycle" => s.confirm_recycle = v != "0",
             "show_sidebar" => s.show_sidebar = v != "0",
             // Default false, so only an explicit "1" enables it.
@@ -153,12 +162,14 @@ pub(crate) fn save(s: &Settings) {
         .map(|&b| if b { '1' } else { '0' })
         .collect();
     let text = format!(
-        "theme={theme}\nunits={}\nside={side}\nscan_on_launch={}\nconfirm_recycle={}\nshow_sidebar={}\nshow_system={}\ncols={cols}\n",
+        "theme={theme}\nunits={}\nside={side}\nscan_on_launch={}\ncheck_updates_on_launch={}\nconfirm_recycle={}\nshow_sidebar={}\nshow_system={}\ncols={cols}\nlast_update_seen={}\n",
         if s.units_binary { "binary" } else { "decimal" },
         s.scan_on_launch as i32,
+        s.check_updates_on_launch as i32,
         s.confirm_recycle as i32,
         s.show_sidebar as i32,
         s.show_system_files as i32,
+        s.last_update_seen,
     );
     let _ = std::fs::write(p, text);
 }
@@ -170,10 +181,12 @@ pub(crate) fn save_from(app: &AppState) {
         units_binary: app.units_binary,
         default_side: app.default_side,
         scan_on_launch: app.scan_on_launch,
+        check_updates_on_launch: app.check_updates_on_launch,
         confirm_recycle: app.confirm_recycle,
         show_sidebar: app.show_sidebar,
         show_system_files: app.show_system_files,
         col_visible: app.col_visible,
+        last_update_seen: app.last_update_seen.clone(),
     });
 }
 
@@ -195,6 +208,7 @@ const A_TOG_SCAN: i32 = 40;
 const A_TOG_CONFIRM: i32 = 41;
 const A_TOG_SIDEBAR: i32 = 42;
 const A_TOG_SYSFILES: i32 = 43;
+const A_TOG_UPDATES: i32 = 44;
 // Column-visibility toggles carry the logical column id (1,3,4,5,6) as 100 + id.
 const A_COL_BASE: i32 = 100;
 
@@ -234,7 +248,7 @@ const COLUMN_ROWS: [(&str, i32, &str); 6] = [
 ];
 
 const WIN_W: i32 = 460;
-const WIN_H: i32 = 712;
+const WIN_H: i32 = 746;
 
 pub(crate) unsafe fn show_settings(parent: HWND, app: &mut AppState) {
     let hinstance = GetModuleHandleW(None).expect("hinst");
@@ -558,13 +572,21 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         app.scan_on_launch,
         A_TOG_SCAN,
     );
+    row_checkbox(
+        hdc,
+        app,
+        "Check for updates on launch",
+        274,
+        app.check_updates_on_launch,
+        A_TOG_UPDATES,
+    );
 
-    section(hdc, app, "BEHAVIOUR", 288);
+    section(hdc, app, "BEHAVIOUR", 322);
     row_checkbox(
         hdc,
         app,
         "Confirm before recycling",
-        316,
+        350,
         app.confirm_recycle,
         A_TOG_CONFIRM,
     );
@@ -572,7 +594,7 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         hdc,
         app,
         "Show drive sidebar",
-        350,
+        384,
         app.show_sidebar,
         A_TOG_SIDEBAR,
     );
@@ -580,13 +602,13 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         hdc,
         app,
         "Show protected system files",
-        384,
+        418,
         app.show_system_files,
         A_TOG_SYSFILES,
     );
 
-    section(hdc, app, "COLUMNS  (Name and Size always shown)", 430);
-    let mut cy = 458;
+    section(hdc, app, "COLUMNS  (Name and Size always shown)", 464);
+    let mut cy = 492;
     for (idx, (label, logical, _)) in COLUMN_ROWS.iter().enumerate() {
         row_checkbox(
             hdc,
@@ -661,6 +683,7 @@ unsafe fn apply_action(hwnd: HWND, app: &mut AppState, action: i32) {
         A_SIDE_TEMP => set_default_side(app, SideView::TempFiles),
         A_SIDE_NONE => set_default_side(app, SideView::None),
         A_TOG_SCAN => app.scan_on_launch = !app.scan_on_launch,
+        A_TOG_UPDATES => app.check_updates_on_launch = !app.check_updates_on_launch,
         A_TOG_CONFIRM => app.confirm_recycle = !app.confirm_recycle,
         A_TOG_SIDEBAR => {
             app.show_sidebar = !app.show_sidebar;

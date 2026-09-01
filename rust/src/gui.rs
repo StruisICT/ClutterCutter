@@ -128,6 +128,11 @@ const ID_TOPBAR: u16 = 306;
 const ID_SIDEBAR: u16 = 307;
 const ID_CRUMB: u16 = 308;
 const ID_SEARCH: u16 = 309;
+// Update banner (below the top bar) + its two painted hotspots, forwarded to the
+// main window as WM_COMMAND like the sidebar's buttons.
+const ID_BANNER: u16 = 310;
+const ID_BANNER_GET: u16 = 311;
+const ID_BANNER_DISMISS: u16 = 312;
 const ID_STATUS: u16 = 400;
 
 // Struis ICT redesign geometry.
@@ -153,6 +158,10 @@ const RECYCLE_BTN_W: i32 = 100;
 
 // Custom status strip height
 const STATUS_H: i32 = 24;
+
+// "Update available" banner strip, shown between the top bar and the content
+// only when a newer release was found at startup (see gui::update).
+const BANNER_H: i32 = 34;
 
 // Accelerator + context-menu IDs share the WM_COMMAND space.
 const ID_ACC_REFRESH: u16 = 3001; // F5
@@ -199,6 +208,9 @@ const WM_APP_TEMP_DONE: u32 = WM_APP + 3;
 const WM_APP_DRIVE_DONE: u32 = WM_APP + 4;
 // A background recycle finished; its success flag is in `recycle_result`.
 const WM_APP_RECYCLE_DONE: u32 = WM_APP + 5;
+// The startup update check found a newer release; the bare version string is
+// waiting in `update_pending` and the banner should be raised.
+const WM_APP_UPDATE_AVAILABLE: u32 = WM_APP + 6;
 
 // Virtual key codes (avoid pulling another module just for these)
 const VK_F5: u16 = 0x74;
@@ -354,6 +366,18 @@ struct AppState {
     // 0=coffee, 1=github, 2=site, 3=OK. Recorded on paint, used by click.
     about_hit: Vec<(RECT, i32)>,
 
+    // "Update available" banner shown below the top bar when the startup check
+    // finds a newer release. `banner` is its owner-drawn child window;
+    // `update_banner_visible` gates the layout reflow; `update_available_version`
+    // is the bare version rendered; `update_banner_hit` are the painted hotspots
+    // (rect, ID_BANNER_GET | ID_BANNER_DISMISS). `update_pending` hands the found
+    // version string from the background check thread to the UI thread.
+    banner: HWND,
+    update_banner_visible: bool,
+    update_available_version: String,
+    update_banner_hit: Vec<(RECT, i32)>,
+    update_pending: Arc<Mutex<Option<String>>>,
+
     // Side panel: container (child of main or of the floating frame when
     // detached), its header buttons, the listview that hosts the file-based
     // side views, and the floating frame itself (created lazily).
@@ -469,6 +493,11 @@ struct AppState {
     units_binary: bool,
     default_side: SideView,
     scan_on_launch: bool,
+    // Check GitHub for a newer release at startup and raise the update banner.
+    check_updates_on_launch: bool,
+    // Bare version of the newest release the user has already seen/dismissed in
+    // the banner, so the same version isn't surfaced twice (persisted).
+    last_update_seen: String,
     confirm_recycle: bool,
     show_sidebar: bool,
     // Whether protected system files (shadow copies, page file, WinSxS…) are
@@ -556,6 +585,11 @@ pub fn run() {
             nav_pos: -1,
             nav_lock: false,
             about_hit: Vec::new(),
+            banner: HWND::default(),
+            update_banner_visible: false,
+            update_available_version: String::new(),
+            update_banner_hit: Vec::new(),
+            update_pending: Arc::new(Mutex::new(None)),
             panel: HWND::default(),
             side_list: HWND::default(),
             btn_detach: HWND::default(),
@@ -606,6 +640,8 @@ pub fn run() {
             units_binary: settings.units_binary,
             default_side: settings.default_side,
             scan_on_launch: settings.scan_on_launch,
+            check_updates_on_launch: settings.check_updates_on_launch,
+            last_update_seen: settings.last_update_seen,
             confirm_recycle: settings.confirm_recycle,
             show_sidebar: settings.show_sidebar,
             show_system_files: settings.show_system_files,
@@ -659,6 +695,18 @@ pub fn run() {
         // The worker posts results back once the message loop below is pumping.
         if (*app_ptr).scan_on_launch {
             start_scan_all(hwnd, &mut *app_ptr);
+        }
+
+        // Silently check GitHub for a newer release (unless disabled). The worker
+        // wakes the UI with WM_APP_UPDATE_AVAILABLE only if there's a newer,
+        // not-yet-dismissed version, which raises the banner below the top bar.
+        if (*app_ptr).check_updates_on_launch {
+            update::check_in_background(
+                hwnd,
+                env!("CARGO_PKG_VERSION"),
+                (*app_ptr).last_update_seen.clone(),
+                Arc::clone(&(*app_ptr).update_pending),
+            );
         }
 
         let mut msg = MSG::default();
@@ -906,6 +954,10 @@ unsafe extern "system" fn wnd_proc(
             on_temp_scan_done(app);
             LRESULT(0)
         }
+        m if m == WM_APP_UPDATE_AVAILABLE => {
+            on_update_available(hwnd, app);
+            LRESULT(0)
+        }
         WM_TIMER if wparam.0 == DRIVE_MARQUEE_TIMER => {
             // Advance the indeterminate bars on drives still being scanned.
             if app.scan_all_active && !app.pending_drives.is_empty() {
@@ -986,6 +1038,11 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
         ID_MENU_VIEW_SYSTEM => apply_side_view(hwnd, app, SideView::System),
         ID_MENU_VIEW_DETACH | ID_BTN_DETACH => toggle_detach(hwnd, app),
         ID_BTN_RECYCLE_ALL => recycle_all_temp(hwnd, app),
+        ID_BANNER_GET => {
+            update::open_releases_page();
+            dismiss_update_banner(hwnd, app);
+        }
+        ID_BANNER_DISMISS => dismiss_update_banner(hwnd, app),
         ID_SCAN_ALL_BTN => {
             if !app.scanning {
                 app.active_drive = -1;
@@ -1010,6 +1067,32 @@ unsafe fn on_command(hwnd: HWND, app: &mut AppState, id: u16) {
         }
         _ => on_command_more(hwnd, app, id),
     }
+}
+
+// The startup update check found a newer release: take the version the worker
+// stashed and raise the banner (which reflows the content down by BANNER_H).
+unsafe fn on_update_available(hwnd: HWND, app: &mut AppState) {
+    let version = app.update_pending.lock().ok().and_then(|mut s| s.take());
+    let Some(version) = version else {
+        return;
+    };
+    app.update_available_version = version;
+    app.update_banner_visible = true;
+    layout(hwnd, app);
+    let _ = InvalidateRect(app.banner, None, false);
+}
+
+// Hide the update banner (via "Get update" or the ✕) and remember the version so
+// it isn't surfaced again next launch. Reflows the content back up.
+unsafe fn dismiss_update_banner(hwnd: HWND, app: &mut AppState) {
+    if !app.update_banner_visible {
+        return;
+    }
+    app.last_update_seen = app.update_available_version.clone();
+    settings::save_from(app);
+    app.update_banner_visible = false;
+    layout(hwnd, app);
+    let _ = InvalidateRect(hwnd, None, true);
 }
 
 // Focus-based action target for keyboard accelerators (Enter/Del): the pane
@@ -2304,6 +2387,37 @@ unsafe fn create_children(hwnd: HWND, app: &mut AppState) {
     .expect("crumb");
     SetWindowLongPtrW(app.crumb, GWLP_USERDATA, app_lp);
 
+    // Update-available banner: a full-width owner-drawn strip below the top bar,
+    // created hidden and only shown (via layout()) once the startup check raises
+    // it. Its two hotspots forward to the main window as WM_COMMAND.
+    let banner_class = w!("ClutterCutterBanner");
+    RegisterClassExW(&WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(chrome::banner_proc),
+        hInstance: hinstance.into(),
+        hCursor: LoadCursorW(None, IDC_ARROW).expect("cursor"),
+        hbrBackground: HBRUSH::default(),
+        lpszClassName: banner_class,
+        ..Default::default()
+    });
+    app.banner = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        banner_class,
+        PCWSTR::null(),
+        WS_CHILD | WS_CLIPSIBLINGS,
+        0,
+        TOPBAR_H,
+        800,
+        BANNER_H,
+        hwnd,
+        HMENU(ID_BANNER as isize as _),
+        hinstance,
+        None,
+    )
+    .expect("banner");
+    SetWindowLongPtrW(app.banner, GWLP_USERDATA, app_lp);
+
     // The horizontal drive-button bar and the folder tree are replaced by the
     // sidebar + breadcrumb, but kept alive (hidden): the tree still holds the
     // navigation state that double-click / breadcrumb clicks drive, and the
@@ -2674,9 +2788,26 @@ unsafe fn layout(hwnd: HWND, app: &mut AppState) {
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
     );
 
+    // Optional update banner strip directly below the top bar; when visible it
+    // pushes the whole content area (Row 1) down by BANNER_H.
+    let banner_h = if app.update_banner_visible {
+        BANNER_H
+    } else {
+        0
+    };
+    let _ = MoveWindow(app.banner, 0, TOPBAR_H, rc.right, banner_h, true);
+    let _ = ShowWindow(
+        app.banner,
+        if app.update_banner_visible {
+            SW_SHOW
+        } else {
+            SW_HIDE
+        },
+    );
+
     // Row 1: left DRIVES sidebar (hidden if the user turned it off), then the
     // content area (breadcrumb + table + optional side panel).
-    let top = TOPBAR_H;
+    let top = TOPBAR_H + banner_h;
     let body_h = (rc.bottom - top - STATUS_H).max(0);
     let sidebar_w = if app.show_sidebar { SIDEBAR_W } else { 0 };
     let _ = ShowWindow(
