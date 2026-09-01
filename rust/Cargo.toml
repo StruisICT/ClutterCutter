@@ -1,6 +1,6 @@
 [package]
 name = "cluttercutter"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 publish = false
 description = "Lightweight Windows disk-usage browser (Rust port)"

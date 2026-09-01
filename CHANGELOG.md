@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/StruisICT/ClutterCutter/compare/v0.11.0...v0.12.0) (2026-09-01)
+
+
+### Features
+
+* startup update banner + launch-after-install MSI ([#80](https://github.com/StruisICT/ClutterCutter/issues/80)) ([b1b95c6](https://github.com/StruisICT/ClutterCutter/commit/b1b95c6b5037612086ab26b89c0e40a26603d7ae))
+
 ## [0.11.0](https://github.com/StruisICT/ClutterCutter/compare/v0.10.0...v0.11.0) (2026-08-21)
 
 
