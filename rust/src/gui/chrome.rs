@@ -604,7 +604,7 @@ pub(crate) unsafe extern "system" fn topbar_proc(
             if hit(&home_button_rect(&rc)) {
                 nav_up(app);
             } else if hit(&delete_button_rect(&rc)) {
-                delete_selected(app.main_hwnd, app);
+                delete_selected(app.main_hwnd, app, false);
             } else {
                 let pr = pill_rect(&rc);
                 if hit(&pr) {
