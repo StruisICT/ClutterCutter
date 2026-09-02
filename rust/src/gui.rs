@@ -1547,7 +1547,7 @@ const MODIFIED_COL: i32 = 7;
 const MAIN_COLS: [(&str, i32, bool); 8] = [
     ("NAME", 320, false),
     ("% OF PARENT", 128, false),
-    ("FREE", 150, false),
+    ("FREE", 160, false),
     ("SIZE", 90, true),
     ("OWN SIZE", 90, true),
     ("FILES", 80, true),
@@ -1867,7 +1867,7 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
             let bar_left = rc.left + 6;
             let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
             // Wider text cell so the free amount fits alongside its percentage.
-            let text_w = 92;
+            let text_w = 100;
             let bar_right = rc.right - text_w - 4;
             let free_frac = (br.disk_free as f64 / br.disk_total as f64).clamp(0.0, 1.0) as f32;
             if bar_right - bar_left > 16 {
@@ -1889,12 +1889,16 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
                     fill_round(hdc, &fill, 4, p.blue);
                 }
             }
-            // Free amount plus its share of the disk, e.g. "663 GB · 70%".
-            let free_pct = (free_frac * 100.0).round() as i32;
-            let mut txt: Vec<u16> =
-                format!("{} \u{00b7} {}%", format_bytes(br.disk_free), free_pct)
-                    .encode_utf16()
-                    .collect();
+            // Free amount plus its share of the disk, e.g. "663 GB · 69.6%". One
+            // decimal (like the % OF PARENT column) so on a drive row the used and
+            // free percentages add up to 100.0 rather than 100.4.
+            let mut txt: Vec<u16> = format!(
+                "{} \u{00b7} {:.1}%",
+                format_bytes(br.disk_free),
+                free_frac * 100.0
+            )
+            .encode_utf16()
+            .collect();
             let mut trc = RECT {
                 left: rc.right - text_w - 2,
                 top: rc.top,
