@@ -102,14 +102,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow,
     SetMenu, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
     TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, ACCEL, BS_OWNERDRAW, BS_PUSHBUTTON,
-    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FVIRTKEY, GWLP_USERDATA, HICON, HMENU,
-    HWND_TOP, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, IDYES, IMAGE_ICON, LR_DEFAULTCOLOR,
-    MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO, MF_BYCOMMAND, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MSG, SM_CXVSCROLL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_NORMAL,
-    SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND,
-    WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE,
-    WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL, WNDCLASSEXW,
-    WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
+    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FSHIFT, FVIRTKEY, GWLP_USERDATA, HICON,
+    HMENU, HWND_TOP, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, IDYES, IMAGE_ICON, LR_DEFAULTCOLOR,
+    MB_DEFBUTTON2, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO, MF_BYCOMMAND, MF_POPUP,
+    MF_SEPARATOR, MF_STRING, MSG, SM_CXVSCROLL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE,
+    SW_NORMAL, SW_SHOW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_HSCROLL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_NCACTIVATE, WM_NCCREATE, WM_NCPAINT, WM_NOTIFY, WM_SETREDRAW, WM_SIZE, WM_TIMER, WM_VSCROLL,
+    WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
     WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
@@ -169,6 +169,7 @@ const ID_ACC_STOP: u16 = 3002; // Esc
 const ID_ACC_PARENT: u16 = 3003; // Backspace
 const ID_ACC_DRILL: u16 = 3004; // Enter
 const ID_ACC_DELETE: u16 = 3005; // Del
+const ID_ACC_DELETE_PERM: u16 = 3006; // Shift+Del (permanent delete)
 
 const ID_CTX_OPEN: u16 = 4001;
 const ID_CTX_COPY: u16 = 4002;
@@ -499,6 +500,9 @@ struct AppState {
     // the banner, so the same version isn't surfaced twice (persisted).
     last_update_seen: String,
     confirm_recycle: bool,
+    // Right-click shows the native Windows shell context menu instead of the
+    // app's own menu (persisted). Off by default.
+    native_context_menu: bool,
     show_sidebar: bool,
     // Whether protected system files (shadow copies, page file, WinSxS…) are
     // shown in the Top/Oldest file lists. Off by default; toggled in Settings.
@@ -535,6 +539,14 @@ pub fn run() {
                 | ICC_STANDARD_CLASSES,
         };
         let _ = InitCommonControlsEx(&icex);
+
+        // Apartment-threaded COM for the UI thread, so the native shell context
+        // menu (IContextMenu) works when the user opts into it. Harmless if it's
+        // already initialised; not uninitialised until the process exits.
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
 
         let hinstance = GetModuleHandleW(None).expect("GetModuleHandle");
 
@@ -643,6 +655,7 @@ pub fn run() {
             check_updates_on_launch: settings.check_updates_on_launch,
             last_update_seen: settings.last_update_seen,
             confirm_recycle: settings.confirm_recycle,
+            native_context_menu: settings.native_context_menu,
             show_sidebar: settings.show_sidebar,
             show_system_files: settings.show_system_files,
             col_visible: settings.col_visible,
@@ -673,12 +686,15 @@ pub fn run() {
         .expect("CreateWindowExW");
 
         // Accelerator table
-        let accels: [ACCEL; 5] = [
+        let accels: [ACCEL; 6] = [
             accel(VK_F5, ID_ACC_REFRESH),
             accel(VK_ESCAPE, ID_ACC_STOP),
             accel(VK_BACK, ID_ACC_PARENT),
             accel(VK_RETURN, ID_ACC_DRILL),
             accel(VK_DELETE, ID_ACC_DELETE),
+            // Shift+Del listed before nothing else on VK_DELETE; the modifier
+            // variant wins when Shift is held, plain Del otherwise.
+            accel_shift(VK_DELETE, ID_ACC_DELETE_PERM),
         ];
         let haccel = CreateAcceleratorTableW(&accels).unwrap_or_default();
 
@@ -859,6 +875,15 @@ unsafe fn load_app_icon_sized(px: i32) -> HICON {
 fn accel(vk: u16, cmd: u16) -> ACCEL {
     ACCEL {
         fVirt: windows::Win32::UI::WindowsAndMessaging::ACCEL_VIRT_FLAGS(FVIRTKEY.0),
+        key: vk,
+        cmd,
+    }
+}
+
+// Accelerator that additionally requires Shift to be held.
+fn accel_shift(vk: u16, cmd: u16) -> ACCEL {
+    ACCEL {
+        fVirt: windows::Win32::UI::WindowsAndMessaging::ACCEL_VIRT_FLAGS(FVIRTKEY.0 | FSHIFT.0),
         key: vk,
         cmd,
     }
@@ -1219,8 +1244,15 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
             } else {
                 app.ctx_target
             };
-            handle_recycle(hwnd, app, target);
+            handle_recycle(hwnd, app, target, false);
         }
+        // Shift+Del: permanently delete the focused selection (bypasses the
+        // Recycle Bin) after an explicit, irreversible-action confirmation. The
+        // main list supports multi-select (via delete_selected).
+        ID_ACC_DELETE_PERM => match focus_target(app) {
+            CtxTarget::MainList => delete_selected(hwnd, app, true),
+            CtxTarget::SideList => handle_recycle(hwnd, app, CtxTarget::SideList, true),
+        },
         ID_CTX_COPY => {
             let path = match app.ctx_target {
                 CtxTarget::SideList => side_selected_path(app),
@@ -1515,7 +1547,7 @@ const MODIFIED_COL: i32 = 7;
 const MAIN_COLS: [(&str, i32, bool); 8] = [
     ("NAME", 320, false),
     ("% OF PARENT", 128, false),
-    ("FREE", 110, false),
+    ("FREE", 150, false),
     ("SIZE", 90, true),
     ("OWN SIZE", 90, true),
     ("FILES", 80, true),
@@ -1834,7 +1866,8 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
             let bar_h = 8;
             let bar_left = rc.left + 6;
             let bar_top = rc.top + ((rc.bottom - rc.top) - bar_h) / 2;
-            let text_w = 52;
+            // Wider text cell so the free amount fits alongside its percentage.
+            let text_w = 92;
             let bar_right = rc.right - text_w - 4;
             let free_frac = (br.disk_free as f64 / br.disk_total as f64).clamp(0.0, 1.0) as f32;
             if bar_right - bar_left > 16 {
@@ -1856,7 +1889,12 @@ unsafe fn custom_draw_main_list(app: &AppState, lv: *const NMLVCUSTOMDRAW) -> LR
                     fill_round(hdc, &fill, 4, p.blue);
                 }
             }
-            let mut txt: Vec<u16> = format_bytes(br.disk_free).encode_utf16().collect();
+            // Free amount plus its share of the disk, e.g. "663 GB · 70%".
+            let free_pct = (free_frac * 100.0).round() as i32;
+            let mut txt: Vec<u16> =
+                format!("{} \u{00b7} {}%", format_bytes(br.disk_free), free_pct)
+                    .encode_utf16()
+                    .collect();
             let mut trc = RECT {
                 left: rc.right - text_w - 2,
                 top: rc.top,
@@ -3149,6 +3187,14 @@ unsafe fn build_list_rows(
         let has_children = !k.children.is_empty() || !k.files.is_empty();
         let is_expanded = expanded.contains(&kp);
         let (df, dt) = disk_for(&k.full_path, drives);
+        // At the synthetic "All drives" root (empty path), each child is a whole
+        // drive, so its % bar should show how full that disk is (used / capacity),
+        // matching the sidebar cards — not the drive's share of combined usage.
+        let pct = if node.full_path.is_empty() && dt > 0 {
+            ((dt - df) as f32 / dt as f32).clamp(0.0, 1.0)
+        } else {
+            k.size as f32 / total
+        };
         out.push(BuiltRow {
             lparam: kp,
             file: 0,
@@ -3170,7 +3216,7 @@ unsafe fn build_list_rows(
                 is_folder: true,
                 has_children,
                 expanded: is_expanded,
-                pct: k.size as f32 / total,
+                pct,
             },
         });
         if is_expanded && has_children {
@@ -3693,7 +3739,7 @@ unsafe fn rescan_after_recycle(hwnd: HWND, app: &mut AppState) {
     }
 }
 
-unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget) {
+unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget, permanent: bool) {
     match target {
         CtxTarget::SideList => {
             let indices = selected_indices(app.side_list);
@@ -3701,7 +3747,10 @@ unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget) {
                 return;
             }
             let mut paths: Vec<String> = Vec::new();
-            // For file-ranking views, decrement the owning folders' totals.
+            // For file-ranking views, remember the owning folders' totals to
+            // decrement — but apply them only after a permanent-delete confirm,
+            // so cancelling leaves the tree untouched.
+            let mut adjustments: Vec<(*const FolderNode, i64)> = Vec::new();
             if app.side_view == SideView::TopFiles || app.side_view == SideView::OldestFiles {
                 for &i in &indices {
                     let lp = list_item_lparam(app.side_list, i);
@@ -3709,7 +3758,7 @@ unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget) {
                         let folder_ref: &FolderNode = &*folder;
                         let file_ref: &FileEntry = &*file;
                         paths.push(join_path(&folder_ref.full_path, &file_ref.name));
-                        adjust_ancestors(app, folder, file_ref.size, 1, 0, true);
+                        adjustments.push((folder, file_ref.size));
                     }
                 }
             } else {
@@ -3722,15 +3771,24 @@ unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget) {
             if paths.is_empty() {
                 return;
             }
-            recycle_in_background(hwnd, app, paths);
+            if permanent && !confirm_delete(hwnd, &permanent_prompt(paths.len()), true) {
+                return;
+            }
+            for (folder, size) in adjustments {
+                adjust_ancestors(app, folder, size, 1, 0, true);
+            }
+            recycle_in_background(hwnd, app, paths, permanent);
             remove_side_rows(app.side_list, &indices);
             refresh_after_delete(app);
         }
         CtxTarget::MainList => {
             if let Some(node) = selected_list_node(app) {
                 if !node.full_path.is_empty() {
+                    if permanent && !confirm_delete(hwnd, &permanent_prompt(1), true) {
+                        return;
+                    }
                     let node_ptr = node as *const FolderNode;
-                    recycle_in_background(hwnd, app, vec![node.full_path.clone()]);
+                    recycle_in_background(hwnd, app, vec![node.full_path.clone()], permanent);
                     delete_folder_node(app, node_ptr);
                 }
             }
@@ -3738,9 +3796,18 @@ unsafe fn handle_recycle(hwnd: HWND, app: &mut AppState, target: CtxTarget) {
     }
 }
 
+// Confirmation text for a permanent delete of `n` items from a side list.
+fn permanent_prompt(n: usize) -> String {
+    format!(
+        "Permanently delete {n} selected item{}?\n\n\
+         This bypasses the Recycle Bin and CANNOT be undone.",
+        if n == 1 { "" } else { "s" }
+    )
+}
+
 // Delete-button action: recycle the current main-list selection (folders and/or
 // files) after showing exactly how many folders, files and bytes it will free.
-unsafe fn delete_selected(hwnd: HWND, app: &mut AppState) {
+unsafe fn delete_selected(hwnd: HWND, app: &mut AppState, permanent: bool) {
     let indices = selected_indices(app.list);
     if indices.is_empty() {
         return;
@@ -3779,23 +3846,30 @@ unsafe fn delete_selected(hwnd: HWND, app: &mut AppState) {
         return;
     }
 
-    let prompt = format!(
-        "Move the selected item{} to the Recycle Bin?\n\n\
-         \u{2022} {} folder{}\n\
-         \u{2022} {} file{}\n\
-         \u{2022} {} freed",
-        if paths.len() == 1 { "" } else { "s" },
+    let details = format!(
+        "\u{2022} {} folder{}\n\u{2022} {} file{}\n\u{2022} {} freed",
         format_count(n_folders),
         if n_folders == 1 { "" } else { "s" },
         format_count(n_files),
         if n_files == 1 { "" } else { "s" },
         format_bytes(bytes),
     );
-    if app.confirm_recycle && !confirm_delete(hwnd, &prompt) {
+    let plural = if paths.len() == 1 { "" } else { "s" };
+    let prompt = if permanent {
+        format!(
+            "Permanently delete the selected item{plural}?\n\n\
+             This bypasses the Recycle Bin and CANNOT be undone.\n\n{details}"
+        )
+    } else {
+        format!("Move the selected item{plural} to the Recycle Bin?\n\n{details}")
+    };
+    // A permanent delete is irreversible, so always confirm (regardless of the
+    // "confirm before recycling" setting, which only gates the undoable path).
+    if (permanent || app.confirm_recycle) && !confirm_delete(hwnd, &prompt, permanent) {
         return;
     }
 
-    recycle_in_background(hwnd, app, paths);
+    recycle_in_background(hwnd, app, paths, permanent);
     for fp in folder_ptrs {
         delete_folder_node(app, fp as *const FolderNode);
     }
@@ -3814,16 +3888,21 @@ unsafe fn delete_selected(hwnd: HWND, app: &mut AppState) {
     }
 }
 
-// Yes/No confirmation for a recycle. Returns true if the user chose Yes.
-unsafe fn confirm_delete(hwnd: HWND, msg: &str) -> bool {
-    let title = wide("Delete");
+// Yes/No confirmation for a delete. Returns true if the user chose Yes. For a
+// permanent (non-undoable) delete the dialog says so and defaults to "No".
+unsafe fn confirm_delete(hwnd: HWND, msg: &str, permanent: bool) -> bool {
+    let title = wide(if permanent {
+        "Permanently delete"
+    } else {
+        "Delete"
+    });
     let body = wide(msg);
-    MessageBoxW(
-        hwnd,
-        PCWSTR(body.as_ptr()),
-        PCWSTR(title.as_ptr()),
-        MB_YESNO | MB_ICONWARNING,
-    ) == IDYES
+    let mut flags = MB_YESNO | MB_ICONWARNING;
+    if permanent {
+        // Make the user deliberately choose Yes for the irreversible action.
+        flags |= MB_DEFBUTTON2;
+    }
+    MessageBoxW(hwnd, PCWSTR(body.as_ptr()), PCWSTR(title.as_ptr()), flags) == IDYES
 }
 
 // "Recycle all" panel button: every temp entry in one undoable shell op, in
@@ -3837,7 +3916,7 @@ unsafe fn recycle_all_temp(hwnd: HWND, app: &mut AppState) {
         .iter()
         .map(|e| e.full_path.clone())
         .collect();
-    recycle_in_background(hwnd, app, paths);
+    recycle_in_background(hwnd, app, paths, false);
     app.temp_entries.clear();
     SendMessageW(app.side_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     set_status(app.status, "Recycling temp files in the background...");
@@ -3846,7 +3925,7 @@ unsafe fn recycle_all_temp(hwnd: HWND, app: &mut AppState) {
 // Runs the shell delete on a worker thread so the UI never blocks on it; the
 // in-memory tree/views are updated optimistically by the caller. Reports back
 // via WM_APP_RECYCLE_DONE (used only for the failure fallback).
-unsafe fn recycle_in_background(hwnd: HWND, app: &AppState, paths: Vec<String>) {
+unsafe fn recycle_in_background(hwnd: HWND, app: &AppState, paths: Vec<String>, permanent: bool) {
     if paths.is_empty() {
         return;
     }
@@ -3857,7 +3936,7 @@ unsafe fn recycle_in_background(hwnd: HWND, app: &AppState, paths: Vec<String>) 
     let result = app.recycle_result.clone();
     std::thread::spawn(move || {
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let ok = recycle_many(&refs);
+        let ok = recycle_many(&refs, permanent);
         *result.lock().unwrap() = Some(ok);
         unsafe {
             let _ = PostMessageW(send.to_hwnd(), WM_APP_RECYCLE_DONE, WPARAM(0), LPARAM(0));
@@ -4904,10 +4983,93 @@ unsafe fn selected_list_node(app: &AppState) -> Option<&'static FolderNode> {
     nth_visible_node(app, idx)
 }
 
-unsafe fn show_context_menu(hwnd: HWND, _app: &AppState) {
+unsafe fn show_context_menu(hwnd: HWND, app: &AppState) {
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
+    // When the user opts into the native menu, show the real Windows shell
+    // context menu for the selected item; fall back to the app's own menu if
+    // there's no valid path or the shell menu can't be built.
+    if app.native_context_menu {
+        let path = match app.ctx_target {
+            CtxTarget::SideList => side_selected_path(app),
+            CtxTarget::MainList => selected_list_node(app).map(|n| n.full_path.clone()),
+        };
+        if let Some(path) = path {
+            if !path.is_empty() && show_shell_context_menu(hwnd, pt, &path) {
+                return;
+            }
+        }
+    }
     show_context_menu_at(hwnd, pt);
+}
+
+// Show the native Windows shell context menu for `path` at screen point `pt`,
+// via IContextMenu. Returns false if it couldn't be built (caller falls back to
+// the app's own menu). COM is initialised for the UI thread in run().
+unsafe fn show_shell_context_menu(hwnd: HWND, pt: POINT, path: &str) -> bool {
+    use std::ffi::c_void;
+    use windows::core::PCSTR;
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+    use windows::Win32::UI::Shell::{
+        IContextMenu, IShellFolder, SHBindToParent, SHParseDisplayName, CMF_NORMAL,
+        CMINVOKECOMMANDINFO,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::TPM_RETURNCMD;
+
+    let wpath = wide(path);
+    let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+    if SHParseDisplayName(PCWSTR(wpath.as_ptr()), None, &mut pidl, 0, None).is_err()
+        || pidl.is_null()
+    {
+        return false;
+    }
+
+    // Bind to the item's parent folder and get the item's child PIDL (points into
+    // `pidl`, so only `pidl` is freed at the end).
+    let mut child: *mut ITEMIDLIST = std::ptr::null_mut();
+    let parent: windows::core::Result<IShellFolder> = SHBindToParent(pidl, Some(&mut child));
+    let mut shown = false;
+    if let Ok(parent) = parent {
+        let apidl = [child as *const ITEMIDLIST];
+        if let Ok(cm) = parent.GetUIObjectOf::<HWND, IContextMenu>(hwnd, &apidl, None) {
+            if let Ok(menu) = CreatePopupMenu() {
+                const ID_MIN: u32 = 1;
+                if cm
+                    .QueryContextMenu(menu, 0, ID_MIN, 0x7FFF, CMF_NORMAL)
+                    .is_ok()
+                {
+                    let _ = SetForegroundWindow(hwnd);
+                    // With TPM_RETURNCMD the return value IS the chosen command id
+                    // (0 if the user dismissed the menu), not a success flag.
+                    let cmd = TrackPopupMenu(
+                        menu,
+                        TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
+                        pt.x,
+                        pt.y,
+                        0,
+                        hwnd,
+                        None,
+                    );
+                    let cmd_id = cmd.0 as u32;
+                    if cmd_id >= ID_MIN {
+                        let info = CMINVOKECOMMANDINFO {
+                            cbSize: std::mem::size_of::<CMINVOKECOMMANDINFO>() as u32,
+                            hwnd,
+                            lpVerb: PCSTR((cmd_id - ID_MIN) as usize as *const u8),
+                            nShow: SW_SHOW.0,
+                            ..Default::default()
+                        };
+                        let _ = cm.InvokeCommand(&info);
+                    }
+                    shown = true;
+                }
+                let _ = DestroyMenu(menu);
+            }
+        }
+    }
+    CoTaskMemFree(Some(pidl as *const c_void));
+    shown
 }
 
 unsafe fn show_context_menu_at(hwnd: HWND, pt: POINT) {
@@ -4996,7 +5158,9 @@ fn open_cmd_at(path: &str) {
 // of single-null-terminated wide paths — one syscall regardless of count, so
 // the user sees one undoable operation in the Recycle Bin. Returns whether the
 // operation succeeded without being aborted.
-fn recycle_many(paths: &[&str]) -> bool {
+// `permanent` = bypass the Recycle Bin (no FOF_ALLOWUNDO) for a Shift+Del-style
+// hard delete; otherwise the operation is undoable via the Recycle Bin.
+fn recycle_many(paths: &[&str], permanent: bool) -> bool {
     if paths.is_empty() {
         return true;
     }
@@ -5007,12 +5171,17 @@ fn recycle_many(paths: &[&str]) -> bool {
             buf.push(0);
         }
         buf.push(0);
+        let flags = if permanent {
+            FOF_NOCONFIRMATION.0
+        } else {
+            (FOF_ALLOWUNDO | FOF_NOCONFIRMATION).0
+        };
         let mut op = SHFILEOPSTRUCTW {
             hwnd: HWND::default(),
             wFunc: FO_DELETE,
             pFrom: PCWSTR(buf.as_ptr()),
             pTo: PCWSTR::null(),
-            fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION).0 as u16,
+            fFlags: flags as u16,
             fAnyOperationsAborted: false.into(),
             hNameMappings: std::ptr::null_mut(),
             lpszProgressTitle: PCWSTR::null(),
