@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/StruisICT/ClutterCutter/compare/v0.12.0...v0.13.0) (2026-09-02)
+
+
+### Features
+
+* **gui:** drive fill %, free %, Shift+Del, native context-menu option ([#82](https://github.com/StruisICT/ClutterCutter/issues/82)) ([49d611e](https://github.com/StruisICT/ClutterCutter/commit/49d611edef7b2323fe4107559d8fd4f5cc674277))
+
+
+### Bug Fixes
+
+* **gui:** show free-space % with one decimal so it sums to 100 ([#84](https://github.com/StruisICT/ClutterCutter/issues/84)) ([6ea6077](https://github.com/StruisICT/ClutterCutter/commit/6ea607789dd31291597a487f14647a39fb863668))
+
 ## [0.12.0](https://github.com/StruisICT/ClutterCutter/compare/v0.11.0...v0.12.0) (2026-09-01)
 
 
