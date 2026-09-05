@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/StruisICT/ClutterCutter/compare/v0.13.0...v0.13.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **msi:** plain installer (drop launch-after-install) for winget validation ([#85](https://github.com/StruisICT/ClutterCutter/issues/85)) ([2c730ac](https://github.com/StruisICT/ClutterCutter/commit/2c730ac87469e4e8f0b48a5eeb381343a2f129db))
+
 ## [0.13.0](https://github.com/StruisICT/ClutterCutter/compare/v0.12.0...v0.13.0) (2026-09-02)
 
 
