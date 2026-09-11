@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/StruisICT/ClutterCutter/compare/v0.13.2...v0.14.0) (2026-09-11)
+
+
+### Features
+
+* **msi:** restore launch-after-install ([#89](https://github.com/StruisICT/ClutterCutter/issues/89)) ([9d13b6c](https://github.com/StruisICT/ClutterCutter/commit/9d13b6c567c78721c53fe7673520195427f4d499))
+
 ## [0.13.2](https://github.com/StruisICT/ClutterCutter/compare/v0.13.1...v0.13.2) (2026-09-11)
 
 
