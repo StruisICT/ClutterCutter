@@ -1,0 +1,6 @@
+# Statically link the MSVC C runtime so ClutterCutter.exe is genuinely
+# self-contained (no VCRuntime140.dll / VC++ redistributable dependency).
+# Without this the exe fails with STATUS_DLL_NOT_FOUND on a clean machine —
+# which is why winget's validation sandbox flagged Validation-Executable-Error.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
