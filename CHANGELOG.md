@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/StruisICT/ClutterCutter/compare/v0.13.1...v0.13.2) (2026-09-11)
+
+
+### Bug Fixes
+
+* **build:** statically link the MSVC CRT (self-contained exe, no VCRedist) ([#87](https://github.com/StruisICT/ClutterCutter/issues/87)) ([ec673df](https://github.com/StruisICT/ClutterCutter/commit/ec673df7b55ad2588069e7627b2ff76cb1dddfb6))
+
 ## [0.13.1](https://github.com/StruisICT/ClutterCutter/compare/v0.13.0...v0.13.1) (2026-09-05)
 
 
