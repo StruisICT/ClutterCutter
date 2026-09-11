@@ -32,14 +32,27 @@
     <MediaTemplate EmbedCab="yes" />
 
     <!--
-      NOTE: this is intentionally a plain installer (no launch-after-install).
-      An earlier version added a custom action + RunOnce to open the app after
-      install, but winget's validation flagged it (Validation-Executable-Error:
-      "unable to locate the primary application") and diverted the submission to
-      slow manual review. A dependency-free WiX MSI with no custom actions (like
-      StruisICT.InLook) passes validation and auto-approves, so we keep it plain
-      and let users launch from the Start Menu shortcut. Don't re-add launch CAs.
+      Launch-after-install (fleet-safe): interactive installs (double-click, or an
+      interactive winget install; UILevel >= 4) launch ClutterCutter once when
+      setup finishes. Silent installs stay quiet by DEFAULT (GPO / SCCM / Intune
+      fleet rollouts never spawn the app) unless LAUNCHAFTERINSTALL=1 is passed
+      (the winget silent switches set this), which queues an HKLM RunOnce that
+      fires once at the next sign-in. No SYSTEM-to-user process spawn, so nothing
+      looks like the malware pattern Defender flags.
+      (Briefly removed in 0.13.1 while chasing a winget Validation-Executable-Error,
+      but that was actually a missing VC runtime DLL — fixed by static-CRT linking
+      in 0.13.2 — so the launch custom action is winget-safe.)
     -->
+    <Property Id="LAUNCHAFTERINSTALL" Secure="yes" />
+    <CustomAction Id="LaunchApplication"
+                  FileKey="ClutterCutterExe"
+                  ExeCommand=""
+                  Impersonate="yes"
+                  Return="asyncNoWait" />
+    <InstallExecuteSequence>
+      <!-- Fresh interactive install only (not silent, not repair/uninstall). -->
+      <Custom Action="LaunchApplication" After="InstallFinalize">NOT Installed AND UILevel&gt;=4</Custom>
+    </InstallExecuteSequence>
 
     <!-- Add/Remove Programs metadata -->
     <Icon Id="AppIcon.ico" SourceFile="$(var.IconSource)" />
@@ -50,6 +63,7 @@
     <Feature Id="Main" Title="ClutterCutter" Level="1">
       <ComponentRef Id="MainExe" />
       <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="LaunchOnceRunKey" />
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -60,6 +74,27 @@
                   Source="$(var.ExeSource)"
                   Name="ClutterCutter.exe"
                   KeyPath="yes" />
+          </Component>
+
+          <!-- Opt-in one-time launch for SILENT installs (LAUNCHAFTERINSTALL=1):
+               queue the installed exe in HKLM RunOnce so it starts once at the
+               next sign-in. The component keypath is a separate, stable value so
+               a later repair won't re-queue the launch after RunOnce self-deletes.
+               Without the property this component isn't installed at all, so plain
+               `/qn` fleet installs write nothing. -->
+          <Component Id="LaunchOnceRunKey" Guid="7B2F5A6C-9D3E-4C1A-8F0B-2E4D6A8C1B37">
+            <Condition>LAUNCHAFTERINSTALL=1</Condition>
+            <RegistryValue Root="HKLM"
+                           Key="Software\StruisICT\ClutterCutter"
+                           Name="launchQueued"
+                           Type="integer"
+                           Value="1"
+                           KeyPath="yes" />
+            <RegistryValue Root="HKLM"
+                           Key="Software\Microsoft\Windows\CurrentVersion\RunOnce"
+                           Name="ClutterCutterFirstRun"
+                           Type="string"
+                           Value="&quot;[INSTALLFOLDER]ClutterCutter.exe&quot;" />
           </Component>
         </Directory>
       </Directory>
