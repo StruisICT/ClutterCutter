@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/StruisICT/ClutterCutter/compare/v0.14.0...v0.15.0) (2026-09-12)
+
+
+### Features
+
+* **egui:** show % of parent + drive fill/free percentages (Win32 parity) ([#91](https://github.com/StruisICT/ClutterCutter/issues/91)) ([0a94e15](https://github.com/StruisICT/ClutterCutter/commit/0a94e159f4c091cdf88b26f821bf76a00011fd56))
+
 ## [0.14.0](https://github.com/StruisICT/ClutterCutter/compare/v0.13.2...v0.14.0) (2026-09-11)
 
 
