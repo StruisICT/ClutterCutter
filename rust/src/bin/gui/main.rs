@@ -684,6 +684,10 @@ fn drive_card(
         );
     }
 
+    // Fill / free percentages, computed so they always add up to 100%.
+    let used_pct = (d.used_fraction().clamp(0.0, 1.0) * 100.0).round() as i32;
+    let free_pct = 100 - used_pct;
+
     let pad = 10.0;
     p.text(
         rect.left_top() + egui::vec2(pad, 8.0),
@@ -695,7 +699,7 @@ fn drive_card(
     p.text(
         rect.right_top() + egui::vec2(-pad, 9.0),
         egui::Align2::RIGHT_TOP,
-        format!("{} free", format_bytes(d.free as i64)),
+        format!("{} free · {}%", format_bytes(d.free as i64), free_pct),
         FontId::proportional(11.0),
         pal.subtext,
     );
@@ -715,9 +719,10 @@ fn drive_card(
         rect.left_bottom() + egui::vec2(pad, -8.0),
         egui::Align2::LEFT_BOTTOM,
         format!(
-            "{} of {}",
+            "{} of {} · {}%",
             format_bytes(d.used() as i64),
-            format_bytes(d.total as i64)
+            format_bytes(d.total as i64),
+            used_pct
         ),
         FontId::proportional(11.0),
         pal.subtext,
@@ -874,10 +879,19 @@ fn list_row(
         FontId::proportional(13.0),
         pal.blue,
     );
+    // %-of-parent number (one decimal), just left of the size badge — matches the
+    // Win32 "% OF PARENT" column, which shows the figure next to the bar.
+    p.text(
+        rect.right_center() + egui::vec2(-70.0, 0.0),
+        egui::Align2::RIGHT_CENTER,
+        format!("{:.1}%", frac.clamp(0.0, 1.0) * 100.0),
+        FontId::proportional(12.0),
+        pal.subtext,
+    );
     // %-of-parent bar in the middle band
     let bar_w = (width * 0.30).min(240.0);
     let bar = egui::Rect::from_min_size(
-        egui::pos2(rect.right() - 110.0 - bar_w, rect.center().y - 3.0),
+        egui::pos2(rect.right() - 118.0 - bar_w, rect.center().y - 3.0),
         egui::vec2(bar_w, 6.0),
     );
     p.rect_filled(bar, CornerRadius::same(3), pal.track);
