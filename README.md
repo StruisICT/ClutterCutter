@@ -24,7 +24,22 @@ If ClutterCutter saves you time hunting down what's eating your disk, consider [
 
 ## Download
 
-Pre-built binaries are attached to each [GitHub Release](https://github.com/StruisICT/ClutterCutter/releases). Just grab **`ClutterCutter.exe`** and run it — it's a single self-contained file with no runtime dependency, sporting the current UI and all features. This is the build packaged for winget.
+Pre-built binaries are attached to each [GitHub Release](https://github.com/StruisICT/ClutterCutter/releases). Just grab **`ClutterCutter.exe`** and run it — it's a single self-contained file with no runtime dependency, sporting the current UI and all features.
+
+### Install via winget
+
+```powershell
+winget install StruisICT.ClutterCutter
+```
+
+This installs the per-machine MSI (below): `ClutterCutter.exe` in `Program Files\ClutterCutter\`, a Start Menu shortcut, and an Add/Remove Programs entry. The installer needs admin rights, so expect a UAC prompt when you run this from a normal (non-elevated) terminal. Upgrade later with `winget upgrade StruisICT.ClutterCutter`.
+
+> **Seeing `0x8007029c : An assertion failure has occurred`?** That is a [known winget bug](https://github.com/microsoft/winget-cli/issues/3771) that bites per-machine MSIs started from a non-elevated terminal (tracked here as [#93](https://github.com/StruisICT/ClutterCutter/issues/93)). Either of these works around it:
+>
+> - run the command from a terminal started **as Administrator**, or
+> - add `--silent` (`winget install --silent StruisICT.ClutterCutter`), which makes winget drive the MSI directly and simply shows the UAC prompt.
+>
+> The published manifest now declares that the installer requires elevation, so an up-to-date winget source gives you a plain UAC prompt instead of this error.
 
 ### Enterprise / network deployment (MSI)
 

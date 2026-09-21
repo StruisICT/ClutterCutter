@@ -291,8 +291,10 @@ strict SemVer.
   to `microsoft/winget-pkgs` — that copy-into-a-fork step stays manual. If the
   release was published by release-please (`GITHUB_TOKEN`) the workflow may not
   auto-start; run it from **Actions → winget manifest** with the version. Full
-  steps + repo rules in `winget/README.md`. Packaged binary is
-  `ClutterCutter.exe` (the Rust build), aliased to the `cluttercutter` command.
+  steps + repo rules in `winget/README.md`. Packaged asset is
+  `ClutterCutter.msi` (per-machine WiX installer, `ElevationRequirement:
+  elevationRequired` — see winget/README.md Notes for why that flag matters);
+  bump winget only for releases with Windows-facing changes.
 
 ## Code signing
 
