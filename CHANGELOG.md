@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/StruisICT/ClutterCutter/compare/v0.15.1...v0.16.0) (2026-09-21)
+
+
+### Features
+
+* **gui:** "Open folder" setting: drill down (default) or drill in ([#98](https://github.com/StruisICT/ClutterCutter/issues/98)) ([9c9c8df](https://github.com/StruisICT/ClutterCutter/commit/9c9c8df69955c805a461593bbf435dff683ae3f9))
+
 ## [0.15.1](https://github.com/StruisICT/ClutterCutter/compare/v0.15.0...v0.15.1) (2026-09-21)
 
 
