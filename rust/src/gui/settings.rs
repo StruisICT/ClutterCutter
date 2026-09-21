@@ -40,6 +40,15 @@ use super::{
 // Persisted model
 // ---------------------------------------------------------------------------
 
+// What opening a folder row in the main list (double-click / Enter) does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FolderOpen {
+    // Expand the folder's children inline under it (tree structure). Default.
+    DrillDown,
+    // Navigate into the folder: it becomes the list's root (breadcrumb moves).
+    DrillIn,
+}
+
 pub(crate) struct Settings {
     pub theme: ThemeMode,
     pub units_binary: bool,
@@ -50,6 +59,9 @@ pub(crate) struct Settings {
     // Right-click shows the native Windows shell context menu instead of the
     // app's own menu. Off by default (the app's custom menu).
     pub native_context_menu: bool,
+    // Double-click / Enter on a folder row: expand inline (drill down, the
+    // default) or navigate into it (drill in).
+    pub folder_open: FolderOpen,
     pub show_sidebar: bool,
     pub show_system_files: bool,
     pub col_visible: [bool; 8],
@@ -70,6 +82,7 @@ impl Default for Settings {
             check_updates_on_launch: true,
             confirm_recycle: true,
             native_context_menu: false,
+            folder_open: FolderOpen::DrillDown,
             show_sidebar: true,
             show_system_files: false,
             col_visible: [true; 8],
@@ -123,6 +136,14 @@ pub(crate) fn load() -> Settings {
             "confirm_recycle" => s.confirm_recycle = v != "0",
             // Default false, so only an explicit "1" enables it.
             "native_context_menu" => s.native_context_menu = v == "1",
+            // Default drill down, so only an explicit "in" switches modes.
+            "folder_open" => {
+                s.folder_open = if v == "in" {
+                    FolderOpen::DrillIn
+                } else {
+                    FolderOpen::DrillDown
+                }
+            }
             "show_sidebar" => s.show_sidebar = v != "0",
             // Default false, so only an explicit "1" enables it.
             "show_system" => s.show_system_files = v == "1",
@@ -162,13 +183,17 @@ pub(crate) fn save(s: &Settings) {
         SideView::System => "system",
         SideView::None => "none",
     };
+    let folder_open = match s.folder_open {
+        FolderOpen::DrillDown => "down",
+        FolderOpen::DrillIn => "in",
+    };
     let cols: String = s
         .col_visible
         .iter()
         .map(|&b| if b { '1' } else { '0' })
         .collect();
     let text = format!(
-        "theme={theme}\nunits={}\nside={side}\nscan_on_launch={}\ncheck_updates_on_launch={}\nconfirm_recycle={}\nnative_context_menu={}\nshow_sidebar={}\nshow_system={}\ncols={cols}\nlast_update_seen={}\n",
+        "theme={theme}\nunits={}\nside={side}\nscan_on_launch={}\ncheck_updates_on_launch={}\nconfirm_recycle={}\nnative_context_menu={}\nfolder_open={folder_open}\nshow_sidebar={}\nshow_system={}\ncols={cols}\nlast_update_seen={}\n",
         if s.units_binary { "binary" } else { "decimal" },
         s.scan_on_launch as i32,
         s.check_updates_on_launch as i32,
@@ -191,6 +216,7 @@ pub(crate) fn save_from(app: &AppState) {
         check_updates_on_launch: app.check_updates_on_launch,
         confirm_recycle: app.confirm_recycle,
         native_context_menu: app.native_context_menu,
+        folder_open: app.folder_open,
         show_sidebar: app.show_sidebar,
         show_system_files: app.show_system_files,
         col_visible: app.col_visible,
@@ -218,6 +244,8 @@ const A_TOG_SIDEBAR: i32 = 42;
 const A_TOG_SYSFILES: i32 = 43;
 const A_TOG_UPDATES: i32 = 44;
 const A_TOG_NATIVEMENU: i32 = 45;
+const A_OPEN_DOWN: i32 = 50;
+const A_OPEN_IN: i32 = 51;
 // Column-visibility toggles carry the logical column id (1,3,4,5,6) as 100 + id.
 const A_COL_BASE: i32 = 100;
 
@@ -257,7 +285,7 @@ const COLUMN_ROWS: [(&str, i32, &str); 6] = [
 ];
 
 const WIN_W: i32 = 460;
-const WIN_H: i32 = 780;
+const WIN_H: i32 = 818;
 
 pub(crate) unsafe fn show_settings(parent: HWND, app: &mut AppState) {
     let hinstance = GetModuleHandleW(None).expect("hinst");
@@ -591,11 +619,22 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
     );
 
     section(hdc, app, "BEHAVIOUR", 322);
+    let fo = app.folder_open;
+    row_segmented(
+        hdc,
+        app,
+        "Open folder",
+        350,
+        &[
+            ("Drill down", A_OPEN_DOWN, fo == FolderOpen::DrillDown),
+            ("Drill in", A_OPEN_IN, fo == FolderOpen::DrillIn),
+        ],
+    );
     row_checkbox(
         hdc,
         app,
         "Confirm before recycling",
-        350,
+        388,
         app.confirm_recycle,
         A_TOG_CONFIRM,
     );
@@ -603,7 +642,7 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         hdc,
         app,
         "Use Windows right-click menu",
-        384,
+        422,
         app.native_context_menu,
         A_TOG_NATIVEMENU,
     );
@@ -611,7 +650,7 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         hdc,
         app,
         "Show drive sidebar",
-        418,
+        456,
         app.show_sidebar,
         A_TOG_SIDEBAR,
     );
@@ -619,13 +658,13 @@ unsafe fn paint_settings(hwnd: HWND, app_ptr: *mut AppState) {
         hdc,
         app,
         "Show protected system files",
-        452,
+        490,
         app.show_system_files,
         A_TOG_SYSFILES,
     );
 
-    section(hdc, app, "COLUMNS  (Name and Size always shown)", 498);
-    let mut cy = 526;
+    section(hdc, app, "COLUMNS  (Name and Size always shown)", 536);
+    let mut cy = 564;
     for (idx, (label, logical, _)) in COLUMN_ROWS.iter().enumerate() {
         row_checkbox(
             hdc,
@@ -703,6 +742,15 @@ unsafe fn apply_action(hwnd: HWND, app: &mut AppState, action: i32) {
         A_TOG_UPDATES => app.check_updates_on_launch = !app.check_updates_on_launch,
         A_TOG_CONFIRM => app.confirm_recycle = !app.confirm_recycle,
         A_TOG_NATIVEMENU => app.native_context_menu = !app.native_context_menu,
+        A_OPEN_DOWN | A_OPEN_IN => {
+            app.folder_open = if action == A_OPEN_DOWN {
+                FolderOpen::DrillDown
+            } else {
+                FolderOpen::DrillIn
+            };
+            // The breadcrumb hint names the active mode.
+            let _ = InvalidateRect(app.crumb, None, false);
+        }
         A_TOG_SIDEBAR => {
             app.show_sidebar = !app.show_sidebar;
             layout(main, app);

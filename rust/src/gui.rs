@@ -22,6 +22,7 @@ mod listview;
 mod palette;
 mod scan;
 mod settings;
+use settings::FolderOpen;
 mod update;
 
 use crate::analysis::{oldest_n_files, top_n_files};
@@ -503,6 +504,9 @@ struct AppState {
     // Right-click shows the native Windows shell context menu instead of the
     // app's own menu (persisted). Off by default.
     native_context_menu: bool,
+    // What double-click / Enter does on a folder row: expand it inline (drill
+    // down, the default) or navigate into it (drill in). Persisted.
+    folder_open: FolderOpen,
     show_sidebar: bool,
     // Whether protected system files (shadow copies, page file, WinSxS…) are
     // shown in the Top/Oldest file lists. Off by default; toggled in Settings.
@@ -656,6 +660,7 @@ pub fn run() {
             last_update_seen: settings.last_update_seen,
             confirm_recycle: settings.confirm_recycle,
             native_context_menu: settings.native_context_menu,
+            folder_open: settings.folder_open,
             show_sidebar: settings.show_sidebar,
             show_system_files: settings.show_system_files,
             col_visible: settings.col_visible,
@@ -1219,19 +1224,15 @@ unsafe fn on_command_more(hwnd: HWND, app: &mut AppState, id: u16) {
                     }
                 }
                 CtxTarget::MainList => {
-                    if let Some(node) = selected_list_node(app) {
-                        // Drill into the selected list row by selecting its tree item
-                        if id == ID_ACC_DRILL {
-                            let p = node as *const _ as isize;
-                            if let Some(&hti) = app.item_by_node.get(&p) {
-                                SendMessageW(
-                                    app.tree,
-                                    TVM_SELECTITEM,
-                                    WPARAM(TVGN_CARET as usize),
-                                    LPARAM(hti),
-                                );
-                            }
-                        } else if !node.full_path.is_empty() {
+                    if id == ID_ACC_DRILL {
+                        // Enter opens the selected row the same way a
+                        // double-click does (drill down / drill in per Settings).
+                        let idx = selected_list_index(app.list);
+                        if idx >= 0 {
+                            open_list_row(app, idx);
+                        }
+                    } else if let Some(node) = selected_list_node(app) {
+                        if !node.full_path.is_empty() {
                             open_in_explorer(&node.full_path);
                         }
                     }
@@ -1390,25 +1391,7 @@ unsafe fn on_notify(hwnd: HWND, app: &mut AppState, lparam: LPARAM) -> LRESULT {
             c if c == NM_DBLCLK => {
                 let act = &*(lparam.0 as *const NMITEMACTIVATE);
                 if act.iItem >= 0 {
-                    let row = act.iItem as usize;
-                    let lr = app.list_rows.get(row).map(|b| b.row);
-                    if matches!(lr, Some(l) if l.is_folder && l.has_children) {
-                        // Expandable folder: double-click toggles its inline tree,
-                        // exactly like clicking the [+]/[-] box in front of it.
-                        toggle_expand(app, row);
-                    } else if let Some(node) = nth_visible_node(app, act.iItem) {
-                        // Files / childless folders: fall back to selecting the
-                        // node (drills into it via the hidden tree).
-                        let p = node as *const _ as isize;
-                        if let Some(&hti) = app.item_by_node.get(&p) {
-                            SendMessageW(
-                                app.tree,
-                                TVM_SELECTITEM,
-                                WPARAM(TVGN_CARET as usize),
-                                LPARAM(hti),
-                            );
-                        }
-                    }
+                    open_list_row(app, act.iItem);
                 }
             }
             c if c == NM_RCLICK => {
@@ -3536,6 +3519,31 @@ unsafe extern "system" fn search_subclass(
 
 // Flips the expand state of the folder at `row` and rebuilds the list from the
 // current top-level folder, keeping the toggled row on screen.
+// Open the main-list row at `idx` (double-click / Enter). An expandable folder
+// follows the "Open folder" setting: drill down toggles its inline tree exactly
+// like clicking the [+]/[-] box in front of it; drill in selects the folder's
+// tree item so it becomes the list's root. Files and childless folders always
+// select their node via the hidden tree.
+unsafe fn open_list_row(app: &mut AppState, idx: i32) {
+    let row = idx as usize;
+    let lr = app.list_rows.get(row).map(|b| b.row);
+    if matches!(lr, Some(l) if l.is_folder && l.has_children)
+        && app.folder_open == FolderOpen::DrillDown
+    {
+        toggle_expand(app, row);
+    } else if let Some(node) = nth_visible_node(app, idx) {
+        let p = node as *const _ as isize;
+        if let Some(&hti) = app.item_by_node.get(&p) {
+            SendMessageW(
+                app.tree,
+                TVM_SELECTITEM,
+                WPARAM(TVGN_CARET as usize),
+                LPARAM(hti),
+            );
+        }
+    }
+}
+
 unsafe fn toggle_expand(app: &mut AppState, row: usize) {
     let nodep = list_item_lparam(app.list, row as i32);
     if nodep == 0 || app.selected_node == 0 {

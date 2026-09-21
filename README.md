@@ -13,7 +13,7 @@ If ClutterCutter saves you time hunting down what's eating your disk, consider [
 - **Scan one drive, or all at once** — click a drive to scan it, or **Scan all drives** to scan every volume in parallel; results appear per-drive as each finishes, in alphabetical order. It also auto-scans all drives on startup, so it opens straight into a populated tree.
 - **MFT fast path** — on an NTFS drive as Administrator, ClutterCutter reads the Master File Table directly via `\\.\C:` and parses the records **in parallel across CPU cores**. Far faster than walking the filesystem — a full C: drive (~2 M files) in ~5 seconds.
 - **FindFirstFileEx fallback** with parallel top-level fan-out and `LARGE_FETCH` for non-admin / subfolder scans.
-- **Folder tree + list** — browse the tree, or double-click through folders in the list level after level. Each folder lists its subfolders then its files, sorted alphabetically; the Name column stretches to fill the width.
+- **Folder tree + list** — browse the tree, or open folders straight from the list. By default a double-click (or Enter) **drills down**: the folder expands in place, so you keep the whole tree structure in view. Prefer the classic Explorer feel? Switch **Settings → Behaviour → Open folder** to **Drill in** and a double-click makes that folder the new root instead (the breadcrumb and Back/Forward follow). Each folder lists its subfolders then its files, sorted alphabetically; the Name column stretches to fill the width.
 - **Side panel views** — an optional right-hand panel showing **Top largest files**, **Oldest files**, or **Safe-to-delete temp files** (with a one-click **Recycle all**). The panel grows with the window, has a **draggable splitter** between it and the list, and can **detach** into its own floating window.
 - **Delete without waiting** — recycling a folder or file updates the view in place on a background thread; no full rescan, no freeze.
 - **Dark / Light / Auto theme** that follows the Windows system theme by default. Title bar, menu bar, lists, tree, and panels are all themed via documented + undocumented uxtheme/dwmapi APIs.
@@ -102,7 +102,7 @@ Because tags created by `GITHUB_TOKEN` don't recursively trigger workflows, the 
 | `F5`            | Refresh / re-scan                       |
 | `Esc`           | Stop the running scan                   |
 | `Backspace`     | Go to parent folder (when tree focused) |
-| `Enter`         | Drill down into the selected list row   |
+| `Enter`         | Open the selected list row (drill down or drill in, per Settings) |
 | `Del`           | Move selected items to Recycle Bin      |
 
 ## Notes on file counts
