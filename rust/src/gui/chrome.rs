@@ -298,9 +298,15 @@ pub(crate) unsafe extern "system" fn crumb_proc(
                 x += segw;
             }
             // Right-aligned muted hint, matching the mockup.
-            let mut hint: Vec<u16> = "Folders (sorted by size)  ·  double-click to drill down"
-                .encode_utf16()
-                .collect();
+            let hint_text = match app.folder_open {
+                super::FolderOpen::DrillDown => {
+                    "Folders (sorted by size)  ·  double-click to drill down"
+                }
+                super::FolderOpen::DrillIn => {
+                    "Folders (sorted by size)  ·  double-click to drill in"
+                }
+            };
+            let mut hint: Vec<u16> = hint_text.encode_utf16().collect();
             let mut hrc = RECT {
                 left: x + 20,
                 top: 0,
