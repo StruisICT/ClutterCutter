@@ -356,7 +356,7 @@ impl eframe::App for App {
             )
             .show(ui, |ui| {
                 ui.label(
-                    egui::RichText::new("DRIVES")
+                    egui::RichText::new("Drives")
                         .color(pal.subtext)
                         .size(12.0)
                         .strong(),
@@ -880,7 +880,7 @@ fn list_row(
         pal.blue,
     );
     // %-of-parent number (one decimal), just left of the size badge — matches the
-    // Win32 "% OF PARENT" column, which shows the figure next to the bar.
+    // Win32 "% of parent" column, which shows the figure next to the bar.
     p.text(
         rect.right_center() + egui::vec2(-70.0, 0.0),
         egui::Align2::RIGHT_CENTER,

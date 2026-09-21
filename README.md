@@ -102,7 +102,7 @@ Because tags created by `GITHUB_TOKEN` don't recursively trigger workflows, the 
 | `F5`            | Refresh / re-scan                       |
 | `Esc`           | Stop the running scan                   |
 | `Backspace`     | Go to parent folder (when tree focused) |
-| `Enter`         | Drill into the selected list row        |
+| `Enter`         | Drill down into the selected list row   |
 | `Del`           | Move selected items to Recycle Bin      |
 
 ## Notes on file counts

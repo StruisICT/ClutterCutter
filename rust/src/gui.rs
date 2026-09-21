@@ -1545,14 +1545,14 @@ const MODIFIED_COL: i32 = 7;
 // AppState.col_visible, and phys_to_logical maps a physical listview column index
 // (only the visible ones exist) back to its logical id above.
 const MAIN_COLS: [(&str, i32, bool); 8] = [
-    ("NAME", 320, false),
-    ("% OF PARENT", 128, false),
-    ("FREE", 160, false),
-    ("SIZE", 90, true),
-    ("OWN SIZE", 90, true),
-    ("FILES", 80, true),
-    ("FOLDERS", 80, true),
-    ("MODIFIED", 120, false),
+    ("Name", 320, false),
+    ("% of parent", 128, false),
+    ("Free", 160, false),
+    ("Size", 90, true),
+    ("Own size", 90, true),
+    ("Files", 80, true),
+    ("Folders", 80, true),
+    ("Modified", 120, false),
 ];
 // Logical columns the user is not allowed to hide.
 const ALWAYS_SHOWN_COLS: [usize; 2] = [0, 3]; // Name, Size
