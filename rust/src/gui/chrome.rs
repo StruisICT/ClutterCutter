@@ -298,7 +298,7 @@ pub(crate) unsafe extern "system" fn crumb_proc(
                 x += segw;
             }
             // Right-aligned muted hint, matching the mockup.
-            let mut hint: Vec<u16> = "Folders (sorted by size)  ·  double-click to drill in"
+            let mut hint: Vec<u16> = "Folders (sorted by size)  ·  double-click to drill down"
                 .encode_utf16()
                 .collect();
             let mut hrc = RECT {
@@ -623,7 +623,7 @@ pub(crate) unsafe extern "system" fn topbar_proc(
     }
 }
 
-// The left DRIVES column: a "DRIVES" header, an owner-drawn usage-bar card per
+// The left Drives column: a "Drives" header, an owner-drawn usage-bar card per
 // drive (active card gets a blue border), and it hosts the reparented Scan-all
 // button (owner-drawn via draw_flat_button). A card click scans that drive.
 pub(crate) unsafe extern "system" fn sidebar_proc(
@@ -666,8 +666,8 @@ pub(crate) unsafe extern "system" fn sidebar_proc(
 
             SetBkMode(hdc, TRANSPARENT);
             SelectObject(hdc, HGDIOBJ(app.font_small.0));
-            // "DRIVES" section header, muted grey.
-            let mut hdr: Vec<u16> = "DRIVES".encode_utf16().collect();
+            // "Drives" section header, muted grey.
+            let mut hdr: Vec<u16> = "Drives".encode_utf16().collect();
             let mut hrc = RECT {
                 left: 18,
                 top: 10,
