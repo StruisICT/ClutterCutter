@@ -31,12 +31,13 @@ From the winget-pkgs [Authoring](https://github.com/microsoft/winget-pkgs/blob/m
 - **Schema headers + latest schema** (`1.12.0`) on every file.
 - **Stable, version-specific InstallerUrl** from the official source (our
   GitHub Release asset URL with the `vX.Y.Z` tag — never a "latest" URL).
-- **Installs unattended** ("silent with progress"). A portable exe satisfies this.
-- **No scripts as installers** (`.bat`/`.ps1` banned). We ship an `exe` — fine.
+- **Installs unattended** ("silent with progress"). Our WiX MSI does, via the
+  `/quiet` / `/passive` switches in the installer manifest.
+- **No scripts as installers** (`.bat`/`.ps1` banned). We ship an `.msi` — fine.
 - **Security scans / PUA policy:** every submission is scanned (incl. Microsoft
   Defender) in a sandbox install. A flagged binary is rejected regardless of
-  intent. Our exe is **unsigned**, so this is the most likely failure point —
-  see the caveat under Notes.
+  intent. The sandbox also has to be able to *launch* the installed exe — see
+  the static-CRT note under Notes.
 - **CLA:** first PR requires signing the Microsoft Contributor License Agreement
   (a bot links it on the PR).
 
@@ -69,10 +70,10 @@ The per-version manifest folder is generated automatically. Right after a
 release is published, the **winget manifest** workflow
 (`.github/workflows/winget-manifest.yml`) runs
 [`scripts/Update-WingetManifest.ps1`](../scripts/Update-WingetManifest.ps1) — it
-downloads the published `ClutterCutter.exe` (the Rust build; it was
-`ClutterCutter-rust.exe` up to v0.9.0), computes its SHA256, writes the
-three 1.12.0 manifest files under `winget/manifests/.../<version>/`, and opens an
-**in-repo PR** adding them. It never touches `microsoft/winget-pkgs`.
+downloads the published `ClutterCutter.msi`, computes its SHA256, reads the
+`ProductCode` out of the MSI, writes the three 1.12.0 manifest files under
+`winget/manifests/.../<version>/`, and opens an **in-repo PR** adding them. It
+never touches `microsoft/winget-pkgs`.
 
 - If the release was published via `GITHUB_TOKEN` (release-please) the workflow
   may not auto-start — run it manually: **Actions → winget manifest → Run
@@ -95,25 +96,37 @@ Then, for the actual winget-pkgs submission:
 > Because we cut releases with [release-please](../README.md#releasing) under
 > SemVer, the winget `PackageVersion` is always a sortable `MAJOR.MINOR.PATCH`,
 > which keeps `winget upgrade` ordering correct. Submit the winget update only
-> **after** the GitHub Release (and its `ClutterCutter.exe` asset) exists,
-> since the SHA256 is computed from the published asset.
+> **after** the GitHub Release (and its `ClutterCutter.msi` asset) exists,
+> since the SHA256 and ProductCode are read from the published asset.
+>
+> **Bump winget only for releases with Windows-facing changes.** A Linux/egui-only
+> release (e.g. 0.15.0) ships an identical Windows MSI, so winget stays on the
+> previous version rather than churning a no-op submission.
 
 ## Notes
 
-- `InstallerType: portable` means winget downloads the exe, drops it under
-  `%LOCALAPPDATA%\Microsoft\WinGet\Packages\...`, and adds it to `PATH` under
-  the alias `cluttercutter`.
-- The packaged binary is `ClutterCutter.exe` (the self-contained Rust
-  build), renamed by winget to match the `Commands` alias.
+- `InstallerType: wix`, `Scope: machine`: winget downloads `ClutterCutter.msi`
+  and runs it with the manifest's `/quiet` / `/passive` switches. It lands in
+  `Program Files\ClutterCutter\`, with an all-users Start Menu shortcut and an
+  Add/Remove Programs entry (the `ProductCode` / `UpgradeCode` in the manifest
+  let winget match the installed app for `winget upgrade` / `uninstall`).
+- `LAUNCHAFTERINSTALL=1` on the silent switches queues a one-time launch of the
+  app at the next sign-in (HKLM RunOnce) — see the comment in
+  `msi/ClutterCutter.wxs`. Plain `msiexec /qn` fleet installs stay quiet.
+- **`ElevationRequirement: elevationRequired` is required.** Without it, a
+  `winget install` from a non-elevated terminal fails with
+  `0x8007029c : An assertion failure has occurred` ([#93](https://github.com/StruisICT/ClutterCutter/issues/93)):
+  the per-machine MSI gets elevated out-of-band by Windows Installer,
+  `ShellExecuteEx` hands winget no process handle, and winget asserts
+  ([microsoft/winget-cli#3771](https://github.com/microsoft/winget-cli/issues/3771)).
+  With the flag winget prints "The installer will request to run as
+  administrator" and launches msiexec via `runas`, so the user just gets a UAC
+  prompt. Workarounds for users on a stale manifest: an elevated terminal, or
+  `winget install --silent` (winget then drives the MSI in-process).
+- The exe is linked with a **static CRT** (`rust/.cargo/config.toml`). This is
+  what fixed the recurring `Validation-Executable-Error` on winget-pkgs PRs:
+  the validation sandbox has no VC++ runtime, so a dynamically linked exe
+  failed to start (`STATUS_DLL_NOT_FOUND`). Don't undo it.
+- The binaries ship **unsigned**; winget-pkgs accepts that.
 - Licensed MIT (see `LICENSE` at repo root). The locale manifest declares
   `License: MIT` and `LicenseUrl` pointing at that file on `main`.
-- **Code signing (SignPath Foundation).** The release binaries are wired to be
-  Authenticode-signed for free via [SignPath Foundation](https://signpath.org)'s
-  OSS program — see **Code signing** in [`AGENTS.md`](../AGENTS.md) for the
-  one-time setup. Until that's enabled, the exe ships **unsigned**; since it
-  requests admin elevation and reads the raw NTFS volume (`\\.\C:`) for the MFT
-  fast path — behaviour heuristic scanners flag — an unsigned build is the most
-  likely cause of a winget validation-scan failure. Signing isn't *required* by
-  winget, but it materially reduces SmartScreen/Defender friction and gives users
-  a verifiable publisher. If a signed build is still flagged, submit it to
-  Microsoft for analysis / dispute the detection.
