@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/StruisICT/ClutterCutter/compare/v0.15.0...v0.15.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **gui:** normal-case column headers and Drives label; say "drill down" not "drill in" ([#95](https://github.com/StruisICT/ClutterCutter/issues/95)) ([f9ae864](https://github.com/StruisICT/ClutterCutter/commit/f9ae86469564867278547709043615d9f550965b))
+
 ## [0.15.0](https://github.com/StruisICT/ClutterCutter/compare/v0.14.0...v0.15.0) (2026-09-12)
 
 
