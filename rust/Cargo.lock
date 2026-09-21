@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "cluttercutter"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "eframe",
  "embed-resource",

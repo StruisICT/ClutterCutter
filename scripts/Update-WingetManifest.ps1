@@ -148,7 +148,7 @@ Description: |-
   reads the Master File Table directly for very fast full-drive scans (roughly
   one million files in six seconds), with a parallel FindFirstFileEx walker as
   a fallback for non-NTFS drives and non-admin runs. Includes a treeview
-  drill-in, a Top-largest-files view, an Oldest-files (by date modified) view,
+  drill-down, a Top-largest-files view, an Oldest-files (by date modified) view,
   and a safe-to-delete temp/cache files view. Installs per-machine to Program Files with a Start
   Menu entry; no .NET runtime required.
 Moniker: cluttercutter
